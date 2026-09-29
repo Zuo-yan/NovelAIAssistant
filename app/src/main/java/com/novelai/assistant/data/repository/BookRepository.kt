@@ -88,6 +88,14 @@ class BookRepository @Inject constructor(
 
     suspend fun deleteChapter(chapterId: String) = chapterDao.delete(chapterId)
 
+    suspend fun deleteChapter(bookId: String, chapterId: String) {
+        chapterDao.delete(chapterId)
+        val remaining = chapterDao.countByBook(bookId)
+        bookDao.getById(bookId)?.let {
+            bookDao.update(it.copy(totalChapters = remaining))
+        }
+    }
+
     /** 保存 AI 生成内容为新章节（续写 / 分支） */
     suspend fun saveGeneratedChapter(
         bookId: String,

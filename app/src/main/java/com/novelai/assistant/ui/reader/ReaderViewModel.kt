@@ -225,6 +225,30 @@ class ReaderViewModel @Inject constructor(
 
     fun setTocFilter(filter: TocFilter) { _tocFilter.value = filter }
 
+    fun renameChapter(chapterId: String, newTitle: String) {
+        val trimmed = newTitle.trim()
+        if (trimmed.isBlank()) return
+        viewModelScope.launch {
+            val chapter = chapters.value.firstOrNull { it.id == chapterId } ?: return@launch
+            bookRepository.updateChapter(chapter.copy(title = trimmed))
+        }
+    }
+
+    fun deleteChapter(chapterId: String) {
+        viewModelScope.launch {
+            val list = chapters.value
+            val target = list.firstOrNull { it.id == chapterId } ?: return@launch
+            bookRepository.deleteChapter(bookId, chapterId)
+            val cur = _chapterIndex.value
+            val remaining = list.filterNot { it.id == chapterId }
+            if (remaining.isNotEmpty()) {
+                val newIndex = if (cur >= remaining.size) remaining.lastIndex else cur
+                _chapterIndex.value = newIndex
+                scheduleProgressSave()
+            }
+        }
+    }
+
     fun quoteParagraph(text: String, paraIndex: Int? = null) {
         _quotedText.value = text
         _quotedParaIndex.value = paraIndex

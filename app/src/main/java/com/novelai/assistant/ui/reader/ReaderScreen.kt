@@ -55,6 +55,8 @@ import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.CallMerge
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.DarkMode
+import androidx.compose.material.icons.rounded.Edit
+import androidx.compose.material.icons.rounded.Delete
 import androidx.compose.material.icons.rounded.FormatSize
 import androidx.compose.material.icons.rounded.Headphones
 import androidx.compose.material.icons.rounded.KeyboardArrowLeft
@@ -73,6 +75,9 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
@@ -110,6 +115,14 @@ import com.novelai.assistant.ui.components.OriginBadge
 import com.novelai.assistant.ui.components.SegmentedControl
 import com.novelai.assistant.ui.theme.ReaderPalettes
 import com.novelai.assistant.ui.theme.readerFontFamily
+import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.material3.BottomSheetDefaults
+import androidx.compose.material3.SliderDefaults
+import androidx.compose.material3.SwitchDefaults
+import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.ui.graphics.luminance
+import com.novelai.assistant.ui.theme.NovelColors
+import com.novelai.assistant.ui.theme.NovelAITheme
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
 
@@ -151,6 +164,10 @@ fun ReaderScreen(
     var showGenMenu by remember { mutableStateOf(false) }
     var exportMarkdown by remember { mutableStateOf(true) }
     var selectionMode by remember { mutableStateOf(false) }
+    var actionChapter by remember { mutableStateOf<com.novelai.assistant.data.db.ChapterEntity?>(null) }
+    var renameChapterTarget by remember { mutableStateOf<com.novelai.assistant.data.db.ChapterEntity?>(null) }
+    var renameTitleDraft by remember { mutableStateOf("") }
+    var confirmDeleteChapter by remember { mutableStateOf<com.novelai.assistant.data.db.ChapterEntity?>(null) }
     var currentVisibleParaIndex by remember { androidx.compose.runtime.mutableIntStateOf(0) }
 
     // 阅读亮度（1.0 = 跟随系统）
@@ -178,7 +195,11 @@ fun ReaderScreen(
     }
 
     // 暗色阅读背景下切换状态栏图标为浅色
-    val isDarkReader = settings.bgTheme == ReaderBgTheme.DARK || settings.bgTheme == ReaderBgTheme.BLACK
+        val isSystemDark = isSystemInDarkTheme()
+    val isThemeDark = MaterialTheme.colorScheme.surface.luminance() < 0.5f
+    val isReaderBgDark = settings.bgTheme == ReaderBgTheme.DARK || settings.bgTheme == ReaderBgTheme.BLACK
+    val isEffectiveDark = isSystemDark || isThemeDark || isReaderBgDark
+    val isDarkReader = isEffectiveDark
     DisposableEffect(isDarkReader) {
         val window = (view.context as? Activity)?.window
         val controller = window?.let { androidx.core.view.WindowCompat.getInsetsController(it, view) }
@@ -193,8 +214,11 @@ fun ReaderScreen(
         ActivityResultContracts.CreateDocument("text/plain")
     ) { uri -> viewModel.exportChapter(uri, exportMarkdown) }
 
-    BackHandler(enabled = tocOpen || settingsOpen || quotedText != null) {
+    BackHandler(enabled = tocOpen || settingsOpen || quotedText != null || actionChapter != null || renameChapterTarget != null || confirmDeleteChapter != null) {
         when {
+            actionChapter != null -> actionChapter = null
+            renameChapterTarget != null -> renameChapterTarget = null
+            confirmDeleteChapter != null -> confirmDeleteChapter = null
             tocOpen -> viewModel.closeToc()
             settingsOpen -> viewModel.closeSettings()
             quotedText != null -> viewModel.clearQuote()
@@ -521,11 +545,11 @@ fun ReaderScreen(
         ) {
             Surface(
                 shape = CircleShape,
-                color = MaterialTheme.colorScheme.surfaceContainerHighest.copy(alpha = 0.98f),
+                color = if (isEffectiveDark) Color(0xFF22222E) else MaterialTheme.colorScheme.surfaceContainerHighest.copy(alpha = 0.98f),
                 shadowElevation = 10.dp,
                 border = androidx.compose.foundation.BorderStroke(
                     0.5.dp,
-                    MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)
+                    if (isEffectiveDark) Color(0xFF404050) else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)
                 )
             ) {
                 Row(
@@ -561,7 +585,7 @@ fun ReaderScreen(
                             Icons.Rounded.Close,
                             contentDescription = "取消",
                             modifier = Modifier.size(16.dp),
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant
+                            tint = if (isEffectiveDark) Color(0xFFA0A0AC) else MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
                 }
@@ -590,14 +614,16 @@ fun ReaderScreen(
                 ) {
                     Surface(
                         color = bgColor,
+                        contentColor = Color(palette.text),
                         modifier = Modifier
                             .fillMaxHeight()
-                            .fillMaxWidth(0.82f)
+                            .fillMaxWidth(0.84f)
                     ) {
                         Column(Modifier.padding(top = statusBarPad + 8.dp)) {
                             Text(
                                 "目录 · ${chapters.size} 章",
                                 style = MaterialTheme.typography.titleLarge,
+                                color = if (isEffectiveDark) Color.White else Color(palette.text),
                                 modifier = Modifier.padding(horizontal = 20.dp, vertical = 10.dp)
                             )
                             SegmentedControl(
@@ -605,6 +631,10 @@ fun ReaderScreen(
                                 selected = tocFilter,
                                 labelOf = { it.label },
                                 onSelect = { viewModel.setTocFilter(it) },
+                                containerColor = if (isEffectiveDark) Color(0xFF22222E) else Color(palette.chrome).copy(alpha = 0.6f),
+                                activeColor = if (isEffectiveDark) Color(0xFF323242) else Color.White,
+                                selectedTextColor = if (isEffectiveDark) Color.White else Color(palette.text),
+                                unselectedTextColor = if (isEffectiveDark) Color(0xFFA0A0AC) else Color(palette.secondaryText),
                                 modifier = Modifier.padding(horizontal = 16.dp)
                             )
                             Spacer(Modifier.height(6.dp))
@@ -615,14 +645,20 @@ fun ReaderScreen(
                                         Modifier
                                             .fillMaxWidth()
                                             .background(
-                                                if (isCurrent) MaterialTheme.colorScheme.primary.copy(alpha = 0.10f)
+                                                if (isCurrent) accent.copy(alpha = 0.16f)
                                                 else Color.Transparent
                                             )
-                                            .clickable {
-                                                viewModel.setChapterIndex(item.chapter.chapterIndex)
-                                                viewModel.closeToc()
-                                            }
-                                            .padding(horizontal = 20.dp, vertical = 10.dp)
+                                            .combinedClickable(
+                                                onClick = {
+                                                    viewModel.setChapterIndex(item.chapter.chapterIndex)
+                                                    viewModel.closeToc()
+                                                },
+                                                onLongClick = {
+                                                    haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                                                    actionChapter = item.chapter
+                                                }
+                                            )
+                                            .padding(horizontal = 20.dp, vertical = 11.dp)
                                             .padding(start = (item.depth * 16).dp),
                                         verticalAlignment = Alignment.CenterVertically
                                     ) {
@@ -631,8 +667,9 @@ fun ReaderScreen(
                                         Text(
                                             item.chapter.title,
                                             style = MaterialTheme.typography.bodyMedium,
-                                            color = if (isCurrent) MaterialTheme.colorScheme.primary
-                                            else onChromeColor,
+                                            color = if (isCurrent) accent
+                                            else if (isEffectiveDark) Color(0xFFDCDCE4)
+                                            else Color(palette.text),
                                             maxLines = 1,
                                             overflow = TextOverflow.Ellipsis,
                                             modifier = Modifier.weight(1f)
@@ -647,18 +684,208 @@ fun ReaderScreen(
             }
         }
 
+        // ---------- 目录长按操作底板与弹窗 ----------
+        actionChapter?.let { ch ->
+            NovelAITheme(darkTheme = isEffectiveDark) {
+                ModalBottomSheet(
+                    onDismissRequest = { actionChapter = null },
+                    containerColor = if (isEffectiveDark) Color(0xFF181820) else MaterialTheme.colorScheme.surfaceContainerLow,
+                    contentColor = if (isEffectiveDark) Color(0xFFE8E8EE) else MaterialTheme.colorScheme.onSurface,
+                    dragHandle = {
+                        BottomSheetDefaults.DragHandle(
+                            color = if (isEffectiveDark) Color(0xFF5A5A66) else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
+                        )
+                    }
+                ) {
+                    Column(
+                        Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 24.dp)
+                            .padding(bottom = 32.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.padding(bottom = 6.dp)
+                        ) {
+                            OriginBadge(ch.originType.name)
+                            Spacer(Modifier.width(8.dp))
+                            Text(
+                                ch.title,
+                                style = MaterialTheme.typography.titleMedium,
+                                color = if (isEffectiveDark) Color.White else MaterialTheme.colorScheme.onSurface,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f)
+                            )
+                        }
+
+                        Surface(
+                            shape = MaterialTheme.shapes.medium,
+                            color = if (isEffectiveDark) Color(0xFF252532) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    val target = actionChapter
+                                    actionChapter = null
+                                    if (target != null) {
+                                        renameChapterTarget = target
+                                        renameTitleDraft = target.title
+                                    }
+                                }
+                        ) {
+                            Row(
+                                Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    Icons.Rounded.Edit,
+                                    contentDescription = null,
+                                    tint = if (isEffectiveDark) NovelColors.IndigoLight else MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                                Spacer(Modifier.width(12.dp))
+                                Text(
+                                    "重命名章节",
+                                    style = MaterialTheme.typography.bodyLarge,
+                                    color = if (isEffectiveDark) Color.White else MaterialTheme.colorScheme.onSurface
+                                )
+                            }
+                        }
+
+                        Surface(
+                            shape = MaterialTheme.shapes.medium,
+                            color = if (isEffectiveDark) Color(0xFF361820) else MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.25f),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    val target = actionChapter
+                                    actionChapter = null
+                                    confirmDeleteChapter = target
+                                }
+                        ) {
+                            Row(
+                                Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    Icons.Rounded.Delete,
+                                    contentDescription = null,
+                                    tint = if (isEffectiveDark) Color(0xFFFF6B81) else MaterialTheme.colorScheme.error,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                                Spacer(Modifier.width(12.dp))
+                                Text(
+                                    "删除章节",
+                                    style = MaterialTheme.typography.bodyLarge,
+                                    color = if (isEffectiveDark) Color(0xFFFF6B81) else MaterialTheme.colorScheme.error
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        renameChapterTarget?.let { target ->
+            NovelAITheme(darkTheme = isEffectiveDark) {
+                AlertDialog(
+                    onDismissRequest = { renameChapterTarget = null },
+                    containerColor = if (isEffectiveDark) Color(0xFF20202A) else MaterialTheme.colorScheme.surfaceContainerHigh,
+                    titleContentColor = if (isEffectiveDark) Color.White else MaterialTheme.colorScheme.onSurface,
+                    textContentColor = if (isEffectiveDark) Color(0xFFD0D0D8) else MaterialTheme.colorScheme.onSurfaceVariant,
+                    title = { Text("重命名章节") },
+                    text = {
+                        OutlinedTextField(
+                            value = renameTitleDraft,
+                            onValueChange = { renameTitleDraft = it },
+                            label = { Text("章节名称") },
+                            singleLine = true,
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedTextColor = if (isEffectiveDark) Color.White else MaterialTheme.colorScheme.onSurface,
+                                unfocusedTextColor = if (isEffectiveDark) Color.White else MaterialTheme.colorScheme.onSurface,
+                                focusedBorderColor = if (isEffectiveDark) NovelColors.IndigoLight else MaterialTheme.colorScheme.primary,
+                                unfocusedBorderColor = if (isEffectiveDark) Color(0xFF4A4A58) else MaterialTheme.colorScheme.outline,
+                                focusedLabelColor = if (isEffectiveDark) NovelColors.IndigoLight else MaterialTheme.colorScheme.primary,
+                                unfocusedLabelColor = if (isEffectiveDark) Color(0xFFA0A0AC) else MaterialTheme.colorScheme.onSurfaceVariant
+                            ),
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    },
+                    confirmButton = {
+                        TextButton(
+                            onClick = {
+                                viewModel.renameChapter(target.id, renameTitleDraft)
+                                renameChapterTarget = null
+                            },
+                            enabled = renameTitleDraft.isNotBlank()
+                        ) {
+                            Text(
+                                "保存",
+                                color = if (renameTitleDraft.isNotBlank()) {
+                                    if (isEffectiveDark) NovelColors.IndigoLight else MaterialTheme.colorScheme.primary
+                                } else Color.Gray
+                            )
+                        }
+                    },
+                    dismissButton = {
+                        TextButton(onClick = { renameChapterTarget = null }) {
+                            Text("取消", color = if (isEffectiveDark) Color(0xFFA0A0AC) else MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    }
+                )
+            }
+        }
+
+        confirmDeleteChapter?.let { target ->
+            NovelAITheme(darkTheme = isEffectiveDark) {
+                AlertDialog(
+                    onDismissRequest = { confirmDeleteChapter = null },
+                    containerColor = if (isEffectiveDark) Color(0xFF20202A) else MaterialTheme.colorScheme.surfaceContainerHigh,
+                    titleContentColor = if (isEffectiveDark) Color.White else MaterialTheme.colorScheme.onSurface,
+                    textContentColor = if (isEffectiveDark) Color(0xFFD0D0D8) else MaterialTheme.colorScheme.onSurfaceVariant,
+                    title = { Text("删除章节《${target.title}》？") },
+                    text = { Text("该章节内容将被永久删除，此操作无法撤销。") },
+                    confirmButton = {
+                        TextButton(
+                            onClick = {
+                                viewModel.deleteChapter(target.id)
+                                confirmDeleteChapter = null
+                            }
+                        ) {
+                            Text("删除", color = MaterialTheme.colorScheme.error)
+                        }
+                    },
+                    dismissButton = {
+                        TextButton(onClick = { confirmDeleteChapter = null }) {
+                            Text("取消", color = if (isEffectiveDark) Color(0xFFA0A0AC) else MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    }
+                )
+            }
+        }
+
         // ---------- 阅读设置 ----------
         if (settingsOpen) {
-            ModalBottomSheet(
-                onDismissRequest = { viewModel.closeSettings() },
-                containerColor = MaterialTheme.colorScheme.surface
-            ) {
-                ReaderSettingsSheet(
-                    settings = settings,
-                    viewModel = viewModel,
-                    brightness = brightness,
-                    onBrightnessChange = { brightness = it }
-                )
+            NovelAITheme(darkTheme = isEffectiveDark) {
+                ModalBottomSheet(
+                    onDismissRequest = { viewModel.closeSettings() },
+                    containerColor = if (isEffectiveDark) Color(0xFF181820) else MaterialTheme.colorScheme.surfaceContainerLow,
+                    contentColor = if (isEffectiveDark) Color(0xFFE8E8EE) else MaterialTheme.colorScheme.onSurface,
+                    dragHandle = {
+                        BottomSheetDefaults.DragHandle(
+                            color = if (isEffectiveDark) Color(0xFF5A5A66) else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
+                        )
+                    }
+                ) {
+                    ReaderSettingsSheet(
+                        settings = settings,
+                        viewModel = viewModel,
+                        brightness = brightness,
+                        isDark = isEffectiveDark,
+                        onBrightnessChange = { brightness = it }
+                    )
+                }
             }
         }
     }
@@ -1087,8 +1314,16 @@ private fun ReaderSettingsSheet(
     settings: ReadingSettings,
     viewModel: ReaderViewModel,
     brightness: Float,
+    isDark: Boolean,
     onBrightnessChange: (Float) -> Unit
 ) {
+    val sliderColors = SliderDefaults.colors(
+        thumbColor = if (isDark) NovelColors.IndigoLight else MaterialTheme.colorScheme.primary,
+        activeTrackColor = if (isDark) NovelColors.IndigoLight else MaterialTheme.colorScheme.primary,
+        inactiveTrackColor = if (isDark) Color(0xFF2C2C3A) else MaterialTheme.colorScheme.surfaceVariant
+    )
+    val labelColor = if (isDark) Color(0xFFE8E8EE) else MaterialTheme.colorScheme.onSurface
+
     Column(
         Modifier
             .fillMaxWidth()
@@ -1096,20 +1331,22 @@ private fun ReaderSettingsSheet(
             .padding(bottom = 32.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
-        Text("阅读设置", style = MaterialTheme.typography.titleLarge)
+        Text("阅读设置", style = MaterialTheme.typography.titleLarge, color = labelColor)
 
         // 亮度
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Text("亮度", style = MaterialTheme.typography.bodyLarge, modifier = Modifier.width(80.dp))
+            Text("亮度", style = MaterialTheme.typography.bodyLarge, color = labelColor, modifier = Modifier.width(80.dp))
             Slider(
                 value = brightness,
                 onValueChange = { onBrightnessChange((it * 100).toInt() / 100f) },
                 valueRange = 0.05f..1f,
+                colors = sliderColors,
                 modifier = Modifier.weight(1f)
             )
             Text(
                 if (brightness >= 0.99f) "系统" else "${(brightness * 100).toInt()}%",
                 style = MaterialTheme.typography.labelMedium,
+                color = if (isDark) Color(0xFFA0A0AC) else MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.width(44.dp),
                 textAlign = androidx.compose.ui.text.style.TextAlign.End
             )
@@ -1117,59 +1354,63 @@ private fun ReaderSettingsSheet(
 
         // 字号
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Icon(Icons.Rounded.FormatSize, contentDescription = null, Modifier.size(18.dp))
+            Icon(Icons.Rounded.FormatSize, contentDescription = null, tint = labelColor, modifier = Modifier.size(18.dp))
             Spacer(Modifier.width(10.dp))
-            Text("字号", style = MaterialTheme.typography.bodyLarge, modifier = Modifier.width(52.dp))
+            Text("字号", style = MaterialTheme.typography.bodyLarge, color = labelColor, modifier = Modifier.width(52.dp))
             IconButton(onClick = { viewModel.setFontSize(settings.fontSizeSp - 1) }) {
-                Text("A-", style = MaterialTheme.typography.titleMedium)
+                Text("A-", style = MaterialTheme.typography.titleMedium, color = if (isDark) Color.White else MaterialTheme.colorScheme.onSurface)
             }
             Text(
                 "${settings.fontSizeSp}",
                 style = MaterialTheme.typography.titleMedium,
+                color = if (isDark) NovelColors.IndigoLight else MaterialTheme.colorScheme.primary,
                 modifier = Modifier.width(40.dp),
                 textAlign = androidx.compose.ui.text.style.TextAlign.Center
             )
             IconButton(onClick = { viewModel.setFontSize(settings.fontSizeSp + 1) }) {
-                Text("A+", style = MaterialTheme.typography.titleMedium)
+                Text("A+", style = MaterialTheme.typography.titleMedium, color = if (isDark) Color.White else MaterialTheme.colorScheme.onSurface)
             }
         }
 
         // 行距
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Text("行距", style = MaterialTheme.typography.bodyLarge, modifier = Modifier.width(80.dp))
+            Text("行距", style = MaterialTheme.typography.bodyLarge, color = labelColor, modifier = Modifier.width(80.dp))
             Slider(
                 value = settings.lineSpacingMultiplier,
                 onValueChange = { viewModel.setLineSpacing((it * 10).toInt() / 10f) },
                 valueRange = 1.2f..2.4f,
+                colors = sliderColors,
                 modifier = Modifier.weight(1f)
             )
         }
 
         // 边距
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Text("边距", style = MaterialTheme.typography.bodyLarge, modifier = Modifier.width(80.dp))
+            Text("边距", style = MaterialTheme.typography.bodyLarge, color = labelColor, modifier = Modifier.width(80.dp))
             Slider(
                 value = settings.horizontalPaddingDp.toFloat(),
                 onValueChange = { viewModel.setHorizontalPadding(it.toInt()) },
                 valueRange = 8f..48f,
+                colors = sliderColors,
                 modifier = Modifier.weight(1f)
             )
         }
 
         // 段距
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Text("段距", style = MaterialTheme.typography.bodyLarge, modifier = Modifier.width(80.dp))
+            Text("段距", style = MaterialTheme.typography.bodyLarge, color = labelColor, modifier = Modifier.width(80.dp))
             Slider(
                 value = settings.paragraphSpacingDp.toFloat(),
                 onValueChange = { viewModel.setParagraphSpacing(it.toInt()) },
                 valueRange = 2f..28f,
+                colors = sliderColors,
                 modifier = Modifier.weight(1f)
             )
         }
 
         // 背景主题
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Text("背景", style = MaterialTheme.typography.bodyLarge, modifier = Modifier.width(80.dp))
+            Text("背景", style = MaterialTheme.typography.bodyLarge, color = labelColor, modifier = Modifier.width(80.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 ReaderBgTheme.entries.forEach { theme ->
                     val p = ReaderPalettes.of(theme.name)
@@ -1179,9 +1420,9 @@ private fun ReaderSettingsSheet(
                             .size(36.dp)
                             .background(Color(p.background), CircleShape)
                             .border(
-                                width = if (selected) 2.5.dp else 0.5.dp,
-                                color = if (selected) MaterialTheme.colorScheme.primary
-                                else MaterialTheme.colorScheme.outline,
+                                width = if (selected) 2.5.dp else 1.dp,
+                                color = if (selected) (if (isDark) NovelColors.IndigoLight else MaterialTheme.colorScheme.primary)
+                                else (if (isDark) Color(0xFF4A4A58) else MaterialTheme.colorScheme.outline),
                                 shape = CircleShape
                             )
                             .clickable { viewModel.setBgTheme(theme) },
@@ -1195,22 +1436,47 @@ private fun ReaderSettingsSheet(
 
         // 衬线
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Text("衬线字体", style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
-            Switch(checked = settings.serifFont, onCheckedChange = { viewModel.setSerif(it) })
+            Text("衬线字体", style = MaterialTheme.typography.bodyLarge, color = labelColor, modifier = Modifier.weight(1f))
+            Switch(
+                checked = settings.serifFont,
+                onCheckedChange = { viewModel.setSerif(it) },
+                colors = SwitchDefaults.colors(
+                    checkedThumbColor = Color.White,
+                    checkedTrackColor = if (isDark) NovelColors.IndigoLight else MaterialTheme.colorScheme.primary,
+                    uncheckedThumbColor = if (isDark) Color(0xFFA0A0AC) else Color.White,
+                    uncheckedTrackColor = if (isDark) Color(0xFF2C2C3A) else MaterialTheme.colorScheme.surfaceVariant
+                )
+            )
         }
 
         // 翻页模式
-        Text("翻页模式", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text("翻页模式", style = MaterialTheme.typography.labelMedium, color = if (isDark) Color(0xFFA0A0AC) else MaterialTheme.colorScheme.onSurfaceVariant)
         SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
             SegmentedButton(
                 selected = settings.pageMode == PageMode.SCROLL,
                 onClick = { viewModel.setPageMode(PageMode.SCROLL) },
-                shape = SegmentedButtonDefaults.itemShape(0, 2)
+                shape = SegmentedButtonDefaults.itemShape(0, 2),
+                colors = SegmentedButtonDefaults.colors(
+                    activeContainerColor = if (isDark) NovelColors.Indigo.copy(alpha = 0.35f) else MaterialTheme.colorScheme.secondaryContainer,
+                    activeContentColor = if (isDark) NovelColors.IndigoLight else MaterialTheme.colorScheme.onSecondaryContainer,
+                    inactiveContainerColor = if (isDark) Color(0xFF252532) else Color.Transparent,
+                    inactiveContentColor = if (isDark) Color(0xFFB0B0BC) else MaterialTheme.colorScheme.onSurfaceVariant,
+                    activeBorderColor = if (isDark) NovelColors.IndigoLight.copy(alpha = 0.6f) else MaterialTheme.colorScheme.outline,
+                    inactiveBorderColor = if (isDark) Color(0xFF383846) else MaterialTheme.colorScheme.outline
+                )
             ) { Text("上下滚动") }
             SegmentedButton(
                 selected = settings.pageMode == PageMode.PAGED,
                 onClick = { viewModel.setPageMode(PageMode.PAGED) },
-                shape = SegmentedButtonDefaults.itemShape(1, 2)
+                shape = SegmentedButtonDefaults.itemShape(1, 2),
+                colors = SegmentedButtonDefaults.colors(
+                    activeContainerColor = if (isDark) NovelColors.Indigo.copy(alpha = 0.35f) else MaterialTheme.colorScheme.secondaryContainer,
+                    activeContentColor = if (isDark) NovelColors.IndigoLight else MaterialTheme.colorScheme.onSecondaryContainer,
+                    inactiveContainerColor = if (isDark) Color(0xFF252532) else Color.Transparent,
+                    inactiveContentColor = if (isDark) Color(0xFFB0B0BC) else MaterialTheme.colorScheme.onSurfaceVariant,
+                    activeBorderColor = if (isDark) NovelColors.IndigoLight.copy(alpha = 0.6f) else MaterialTheme.colorScheme.outline,
+                    inactiveBorderColor = if (isDark) Color(0xFF383846) else MaterialTheme.colorScheme.outline
+                )
             ) { Text("左右翻页") }
         }
     }

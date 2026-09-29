@@ -189,6 +189,10 @@ fun <T> SegmentedControl(
     selected: T,
     labelOf: (T) -> String,
     modifier: Modifier = Modifier,
+    containerColor: Color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),
+    activeColor: Color = MaterialTheme.colorScheme.surface,
+    selectedTextColor: Color = MaterialTheme.colorScheme.onSurface,
+    unselectedTextColor: Color = MaterialTheme.colorScheme.onSurfaceVariant,
     onSelect: (T) -> Unit
 ) {
     val haptics = LocalHapticFeedback.current
@@ -196,14 +200,14 @@ fun <T> SegmentedControl(
         modifier
             .fillMaxWidth()
             .clip(MaterialTheme.shapes.medium)
-            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f))
+            .background(containerColor)
             .padding(3.dp),
         horizontalArrangement = Arrangement.spacedBy(2.dp)
     ) {
         options.forEach { option ->
             val isSelected = option == selected
             val bg by animateColorAsState(
-                if (isSelected) MaterialTheme.colorScheme.surface else Color.Transparent,
+                if (isSelected) activeColor else Color.Transparent,
                 animationSpec = spring(stiffness = 500f),
                 label = "seg"
             )
@@ -222,8 +226,7 @@ fun <T> SegmentedControl(
                 Text(
                     labelOf(option),
                     style = MaterialTheme.typography.labelLarge,
-                    color = if (isSelected) MaterialTheme.colorScheme.onSurface
-                    else MaterialTheme.colorScheme.onSurfaceVariant,
+                    color = if (isSelected) selectedTextColor else unselectedTextColor,
                     maxLines = 1
                 )
             }
