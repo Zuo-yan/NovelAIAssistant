@@ -50,7 +50,16 @@ class ContinuationViewModel @Inject constructor(
     /** 用户自定义章节标题（保存时用，空则自动命名） */
     val customTitle = MutableStateFlow("")
 
+    /** 是否直接基于全书最新章节续写（无需用户手动找章选章） */
+    private val _useLatestChapter = MutableStateFlow(!isBranchMode)
+    val useLatestChapter: StateFlow<Boolean> = _useLatestChapter.asStateFlow()
+
+    private val _latestChapter = MutableStateFlow<ChapterEntity?>(null)
+    val latestChapter: StateFlow<ChapterEntity?> = _latestChapter.asStateFlow()
+
     fun selectParentChapter(chapter: ChapterEntity) {
+        val latest = _allChapters.value.maxByOrNull { it.chapterIndex }
+        _useLatestChapter.value = (chapter.id == latest?.id)
         _parentChapterId.value = chapter.id
         _parentChapter.value = chapter
     }
@@ -84,9 +93,47 @@ class ContinuationViewModel @Inject constructor(
     init {
         viewModelScope.launch {
             _book.value = bookRepository.getBook(bookId)
-            _parentChapter.value = bookRepository.getChapter(_parentChapterId.value)
-            _allChapters.value = bookRepository.getChapters(bookId)
+            val chapters = bookRepository.getChapters(bookId)
+            _allChapters.value = chapters
+            val latest = chapters.maxByOrNull { it.chapterIndex }
+            _latestChapter.value = latest
+
+            if (isBranchMode) {
+                _useLatestChapter.value = false
+                val specified = chapters.firstOrNull { it.id == _parentChapterId.value } ?: latest
+                _parentChapter.value = specified
+                _parentChapterId.value = specified?.id ?: ""
+            } else {
+                // 默认：直接基于全书最新一章续写，不选章节直接续写！
+                val specified = chapters.firstOrNull { it.id == _parentChapterId.value }
+                if (specified != null && latest != null && specified.id != latest.id && savedStateHandle.get<String>("chapterId") != null) {
+                    // 若页面参数明确指定了历史章节，则显示该指定章，但同时可通过顶部开关一键切至最新章
+                    _useLatestChapter.value = false
+                    _parentChapter.value = specified
+                } else if (latest != null) {
+                    _useLatestChapter.value = true
+                    _parentChapter.value = latest
+                    _parentChapterId.value = latest.id
+                } else {
+                    _parentChapter.value = specified
+                }
+            }
         }
+    }
+
+    fun setUseLatestChapter(useLatest: Boolean) {
+        _useLatestChapter.value = useLatest
+        if (useLatest) {
+            val latest = _allChapters.value.maxByOrNull { it.chapterIndex }
+            if (latest != null) {
+                _parentChapter.value = latest
+                _parentChapterId.value = latest.id
+            }
+        }
+    }
+
+    fun selectLatestChapter() {
+        setUseLatestChapter(true)
     }
 
     fun stop() {
@@ -198,10 +245,18 @@ class ContinuationViewModel @Inject constructor(
             continuousCount.value += 1
 
             // 关键：将刚刚生成保存的新章切换为下一章的前置基准
-            _parentChapterId.value = chapter.id
-            _parentChapter.value = chapter
             _allChapters.value = bookRepository.getChapters(bookId)
             _book.value = bookRepository.getBook(bookId)
+            val newLatest = _allChapters.value.maxByOrNull { it.chapterIndex }
+            _latestChapter.value = newLatest
+
+            if (_useLatestChapter.value && newLatest != null) {
+                _parentChapterId.value = newLatest.id
+                _parentChapter.value = newLatest
+            } else {
+                _parentChapterId.value = chapter.id
+                _parentChapter.value = chapter
+            }
 
             _streamingText.value = ""
             _finished.value = false

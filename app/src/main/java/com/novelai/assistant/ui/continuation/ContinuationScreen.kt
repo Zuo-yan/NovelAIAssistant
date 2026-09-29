@@ -18,10 +18,12 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.CallMerge
+import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Stop
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -70,6 +72,8 @@ fun ContinuationScreen(
     val useCraft by viewModel.useWorkshopCraft.collectAsStateWithLifecycle()
     val allChapters by viewModel.allChapters.collectAsStateWithLifecycle()
     val continuousCount by viewModel.continuousCount.collectAsStateWithLifecycle()
+    val latestCh by viewModel.latestChapter.collectAsStateWithLifecycle()
+    val useLatest by viewModel.useLatestChapter.collectAsStateWithLifecycle()
     val haptics = LocalHapticFeedback.current
     var showChapterPicker by remember { mutableStateOf(false) }
     var titleDraft by remember { mutableStateOf("") }
@@ -131,6 +135,40 @@ fun ContinuationScreen(
                 }
             }
 
+            // 续写模式：一键选择「基于全书最新章」或「指定历史章节」
+            if (!viewModel.isBranchMode) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    FilterChip(
+                        selected = useLatest,
+                        onClick = { viewModel.setUseLatestChapter(true) },
+                        label = {
+                            Text(
+                                if (latestCh != null) "⚡ 全书最新章（第${latestCh!!.chapterIndex + 1}章）"
+                                else "⚡ 直接基于最新章续写"
+                            )
+                        },
+                        leadingIcon = if (useLatest) {
+                            { Icon(Icons.Rounded.Check, contentDescription = null, Modifier.size(16.dp)) }
+                        } else null,
+                        modifier = Modifier.weight(1.3f)
+                    )
+                    FilterChip(
+                        selected = !useLatest,
+                        onClick = {
+                            viewModel.setUseLatestChapter(false)
+                            showChapterPicker = true
+                        },
+                        label = { Text("指定章节") },
+                        leadingIcon = if (!useLatest) {
+                            { Icon(Icons.Rounded.Check, contentDescription = null, Modifier.size(16.dp)) }
+                        } else null
+                    )
+                }
+            }
+
             // 基准章节卡（可切换）
             Surface(
                 shape = MaterialTheme.shapes.large,
@@ -157,7 +195,9 @@ fun ContinuationScreen(
                             overflow = TextOverflow.Ellipsis
                         )
                         Text(
-                            if (viewModel.isBranchMode) "剧情从这一章分岔" else "正文从这一章末尾续写",
+                            if (viewModel.isBranchMode) "剧情从这一章分岔推演"
+                            else if (useLatest) "⚡ 自动追踪全书最新末尾无缝续写"
+                            else "正文从这一章末尾续写",
                             style = MaterialTheme.typography.labelMedium,
                             color = MaterialTheme.colorScheme.primary
                         )
@@ -336,6 +376,32 @@ fun ContinuationScreen(
                         .fillMaxWidth()
                         .height(380.dp)
                 ) {
+                    item {
+                        TextButton(
+                            onClick = {
+                                viewModel.selectLatestChapter()
+                                showChapterPicker = false
+                            },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(bottom = 6.dp)
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(
+                                    Icons.Rounded.AutoAwesome,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Spacer(Modifier.width(6.dp))
+                                Text(
+                                    "⚡ 全书最新章（第${(allChapters.maxByOrNull { it.chapterIndex }?.chapterIndex ?: 0) + 1}章 · 自动追踪）",
+                                    color = MaterialTheme.colorScheme.primary,
+                                    style = MaterialTheme.typography.labelLarge
+                                )
+                            }
+                        }
+                    }
                     items(allChapters) { ch ->
                         TextButton(
                             onClick = {
