@@ -1,0 +1,346 @@
+package com.novelai.assistant.ui.assistant
+
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.AutoAwesome
+import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.Send
+import androidx.compose.material.icons.rounded.Stop
+import androidx.compose.material.icons.rounded.Visibility
+import androidx.compose.material.icons.rounded.VisibilityOff
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
+import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.novelai.assistant.data.db.AiChatRecordEntity
+import com.novelai.assistant.domain.PromptBuilder
+import com.novelai.assistant.ui.components.EmptyState
+import com.novelai.assistant.ui.components.LargeTitleHeader
+
+@Composable
+fun AssistantScreen(
+    bookIdArg: String,
+    quoteArg: String,
+    viewModel: AssistantViewModel = hiltViewModel()
+) {
+    val books by viewModel.books.collectAsStateWithLifecycle()
+    val currentBookId by viewModel.currentBookId.collectAsStateWithLifecycle()
+    val chatRecords by viewModel.chatRecords.collectAsStateWithLifecycle()
+    val streamingText by viewModel.streamingText.collectAsStateWithLifecycle()
+    val generating by viewModel.generating.collectAsStateWithLifecycle()
+    val pendingQuote by viewModel.pendingQuote.collectAsStateWithLifecycle()
+    val error by viewModel.error.collectAsStateWithLifecycle()
+    val spoilerFree by viewModel.spoilerFree.collectAsStateWithLifecycle()
+    val retrievedHint by viewModel.retrievedHint.collectAsStateWithLifecycle()
+
+    var input by remember { mutableStateOf("") }
+    val listState = rememberLazyListState()
+    val haptics = LocalHapticFeedback.current
+
+    // 初始参数：书 + 引文
+    LaunchedEffect(bookIdArg, quoteArg) {
+        if (bookIdArg.isNotBlank()) viewModel.selectBook(bookIdArg)
+        if (quoteArg.isNotBlank()) viewModel.setPendingQuote(quoteArg)
+    }
+
+    // 默认选第一本书
+    LaunchedEffect(books) {
+        if (currentBookId.isBlank() && books.isNotEmpty()) viewModel.selectBook(books.first().id)
+    }
+
+    // 自动滚动到底部
+    LaunchedEffect(chatRecords.size, streamingText) {
+        val count = chatRecords.size + if (streamingText.isNotBlank()) 1 else 0
+        if (count > 0) listState.animateScrollToItem((count - 1).coerceAtLeast(0))
+    }
+
+    Column(
+        Modifier
+            .fillMaxSize()
+            .statusBarsPadding()
+            .imePadding()
+    ) {
+        LargeTitleHeader(title = "AI 助手", subtitle = "伴读 · 划线即问 · 全书回忆")
+
+        // 书籍选择 + 不剧透开关
+        LazyRow(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            contentPadding = PaddingValues(horizontal = 20.dp)
+        ) {
+            items(books, key = { it.id }) { book ->
+                FilterChip(
+                    selected = book.id == currentBookId,
+                    onClick = {
+                        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        viewModel.selectBook(book.id)
+                    },
+                    label = {
+                        Text(
+                            book.title,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.widthIn(max = 140.dp)
+                        )
+                    }
+                )
+            }
+            item {
+                FilterChip(
+                    selected = spoilerFree,
+                    onClick = {
+                        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        viewModel.toggleSpoilerFree()
+                    },
+                    label = { Text(if (spoilerFree) "不剧透" else "全书模式") },
+                    leadingIcon = {
+                        Icon(
+                            if (spoilerFree) Icons.Rounded.VisibilityOff else Icons.Rounded.Visibility,
+                            contentDescription = null,
+                            modifier = Modifier.height(16.dp)
+                        )
+                    }
+                )
+            }
+        }
+
+        Spacer(Modifier.height(8.dp))
+
+        // 引文卡
+        pendingQuote?.let { quote ->
+            Surface(
+                shape = MaterialTheme.shapes.medium,
+                color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 20.dp, vertical = 4.dp)
+            ) {
+                Row(Modifier.padding(12.dp), verticalAlignment = Alignment.Top) {
+                    Text(
+                        quote,
+                        style = MaterialTheme.typography.bodyMedium,
+                        maxLines = 4,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f)
+                    )
+                    IconButton(onClick = { viewModel.clearQuote() }, modifier = Modifier.height(24.dp)) {
+                        Icon(Icons.Rounded.Close, contentDescription = "移除引文", Modifier.height(16.dp))
+                    }
+                }
+            }
+            // 快捷指令
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 20.dp, vertical = 4.dp)
+            ) {
+                listOf("AI 解析深意" to PromptBuilder.QUICK_ANALYZE, "AI 情绪总结" to PromptBuilder.QUICK_EMOTION, "AI 吐槽" to PromptBuilder.QUICK_ROAST)
+                    .forEach { (label, prompt) ->
+                        FilterChip(
+                            selected = false,
+                            onClick = {
+                                haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                viewModel.send(prompt)
+                            },
+                            label = { Text(label) }
+                        )
+                    }
+            }
+        }
+
+        // 消息列表
+        if (chatRecords.isEmpty() && streamingText.isBlank()) {
+            Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    EmptyState(
+                        icon = Icons.Rounded.AutoAwesome,
+                        title = "和 AI 一起读这本书",
+                        hint = if (currentBookId.isBlank()) "先在书架导入一本书"
+                        else "AI 会自动检索相关章节作答\n或在阅读页长按段落「划线即问」"
+                    )
+                    if (currentBookId.isNotBlank()) {
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            FilterChip(
+                                selected = false,
+                                onClick = { viewModel.send("帮我回忆一下主角到目前为止的关键经历") },
+                                label = { Text("情节回忆") }
+                            )
+                            FilterChip(
+                                selected = false,
+                                onClick = { viewModel.send("分析本书主要人物的生平脉络与人物关系") },
+                                label = { Text("人物分析") }
+                            )
+                            FilterChip(
+                                selected = false,
+                                onClick = { viewModel.send("分析目前剧情的主线冲突与伏笔") },
+                                label = { Text("剧情深读") }
+                            )
+                        }
+                    }
+                }
+            }
+        } else {
+            retrievedHint?.let { hint ->
+                Text(
+                    "已参考：$hint",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 2.dp)
+                )
+            }
+            LazyColumn(
+                state = listState,
+                contentPadding = PaddingValues(horizontal = 20.dp, vertical = 8.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+                modifier = Modifier.weight(1f)
+            ) {
+                itemsIndexed(chatRecords, key = { _, r -> r.id }) { _, record ->
+                    ChatBubble(record)
+                }
+                if (streamingText.isNotBlank()) {
+                    item {
+                        ChatBubble(
+                            AiChatRecordEntity(
+                                id = "streaming", bookId = "", chapterId = null,
+                                role = "assistant", content = streamingText
+                            ),
+                            isStreaming = true
+                        )
+                    }
+                }
+            }
+        }
+
+        // 错误提示
+        error?.let {
+            Text(
+                it,
+                color = MaterialTheme.colorScheme.error,
+                style = MaterialTheme.typography.bodySmall,
+                modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp)
+            )
+        }
+
+        // 输入栏
+        Surface(tonalElevation = 2.dp) {
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 14.dp, vertical = 10.dp),
+                verticalAlignment = Alignment.Bottom,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                OutlinedTextField(
+                    value = input,
+                    onValueChange = { input = it },
+                    placeholder = { Text("问问这本书…") },
+                    modifier = Modifier.weight(1f),
+                    maxLines = 4,
+                    shape = RoundedCornerShape(20.dp)
+                )
+                if (generating) {
+                    IconButton(
+                        onClick = { viewModel.stopGenerating() },
+                        modifier = Modifier
+                            .clip(CircleShape)
+                            .background(MaterialTheme.colorScheme.errorContainer)
+                    ) {
+                        Icon(Icons.Rounded.Stop, contentDescription = "停止", tint = MaterialTheme.colorScheme.error)
+                    }
+                } else {
+                    IconButton(
+                        onClick = {
+                            haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            viewModel.send(input)
+                            input = ""
+                        },
+                        enabled = input.isNotBlank() || pendingQuote != null,
+                        modifier = Modifier
+                            .clip(CircleShape)
+                            .background(
+                                if (input.isNotBlank() || pendingQuote != null)
+                                    MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant
+                            )
+                    ) {
+                        Icon(
+                            Icons.Rounded.Send,
+                            contentDescription = "发送",
+                            tint = if (input.isNotBlank() || pendingQuote != null)
+                                MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ChatBubble(record: AiChatRecordEntity, isStreaming: Boolean = false) {
+    val isUser = record.role == "user"
+    Row(
+        Modifier.fillMaxWidth(),
+        horizontalArrangement = if (isUser) Arrangement.End else Arrangement.Start
+    ) {
+        Surface(
+            shape = RoundedCornerShape(
+                topStart = 18.dp,
+                topEnd = 18.dp,
+                bottomStart = if (isUser) 18.dp else 4.dp,
+                bottomEnd = if (isUser) 4.dp else 18.dp
+            ),
+            color = if (isUser) MaterialTheme.colorScheme.primary
+            else MaterialTheme.colorScheme.surface,
+            modifier = Modifier.widthIn(max = 310.dp)
+        ) {
+            Text(
+                record.content,
+                style = MaterialTheme.typography.bodyLarge,
+                color = if (isUser) MaterialTheme.colorScheme.onPrimary
+                else MaterialTheme.colorScheme.onSurface,
+                modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp)
+            )
+        }
+    }
+}

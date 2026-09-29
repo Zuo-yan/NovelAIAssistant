@@ -1,0 +1,1217 @@
+package com.novelai.assistant.ui.reader
+
+import android.app.Activity
+import android.view.WindowManager
+import android.widget.Toast
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.slideOutVertically
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.asPaddingValues
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.rounded.ArrowBack
+import androidx.compose.material.icons.rounded.AutoAwesome
+import androidx.compose.material.icons.rounded.CallMerge
+import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.DarkMode
+import androidx.compose.material.icons.rounded.FormatSize
+import androidx.compose.material.icons.rounded.Headphones
+import androidx.compose.material.icons.rounded.KeyboardArrowLeft
+import androidx.compose.material.icons.rounded.KeyboardArrowRight
+import androidx.compose.material.icons.rounded.Menu
+import androidx.compose.material.icons.rounded.MoreVert
+import androidx.compose.material.icons.rounded.Pause
+import androidx.compose.material.icons.rounded.PlayArrow
+import androidx.compose.material.icons.rounded.Stop
+import androidx.compose.material.icons.rounded.Tune
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.SegmentedButton
+import androidx.compose.material3.SegmentedButtonDefaults
+import androidx.compose.material3.SingleChoiceSegmentedButtonRow
+import androidx.compose.material3.Slider
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.novelai.assistant.data.prefs.ReaderBgTheme
+import com.novelai.assistant.data.prefs.ReadingSettings
+import com.novelai.assistant.data.prefs.PageMode
+import com.novelai.assistant.ui.components.OriginBadge
+import com.novelai.assistant.ui.components.SegmentedControl
+import com.novelai.assistant.ui.theme.ReaderPalettes
+import com.novelai.assistant.ui.theme.readerFontFamily
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.launch
+
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
+@Composable
+fun ReaderScreen(
+    bookId: String,
+    onBack: () -> Unit,
+    onGenerate: (bookId: String, chapterId: String, mode: String) -> Unit,
+    onOpenTree: (String) -> Unit,
+    onAsk: (bookId: String, quote: String) -> Unit,
+    viewModel: ReaderViewModel = hiltViewModel()
+) {
+    val book by viewModel.book.collectAsStateWithLifecycle()
+    val chapters by viewModel.chapters.collectAsStateWithLifecycle()
+    val settings by viewModel.settings.collectAsStateWithLifecycle()
+    val chapterIndex by viewModel.chapterIndex.collectAsStateWithLifecycle()
+    val currentChapter by viewModel.currentChapter.collectAsStateWithLifecycle()
+    val chromeVisible by viewModel.chromeVisible.collectAsStateWithLifecycle()
+    val tocOpen by viewModel.tocOpen.collectAsStateWithLifecycle()
+    val settingsOpen by viewModel.settingsOpen.collectAsStateWithLifecycle()
+    val tocFilter by viewModel.tocFilter.collectAsStateWithLifecycle()
+    val tocItems by viewModel.tocItems.collectAsStateWithLifecycle()
+    val quotedText by viewModel.quotedText.collectAsStateWithLifecycle()
+    val ttsSpeaking by viewModel.ttsSpeaking.collectAsStateWithLifecycle()
+    val ttsPaused by viewModel.ttsPaused.collectAsStateWithLifecycle()
+    val ttsReady by viewModel.ttsReady.collectAsStateWithLifecycle()
+    val ttsPosition by viewModel.ttsPosition.collectAsStateWithLifecycle()
+    val ttsSpeed by viewModel.ttsSpeed.collectAsStateWithLifecycle()
+
+    val palette = ReaderPalettes.of(settings.bgTheme.name)
+    val bgColor = Color(palette.background)
+    val onChromeColor = Color(palette.onChrome)
+    val secondaryColor = Color(palette.secondaryText)
+    val haptics = LocalHapticFeedback.current
+    val scope = rememberCoroutineScope()
+
+    var showExportMenu by remember { mutableStateOf(false) }
+    var showGenMenu by remember { mutableStateOf(false) }
+    var exportMarkdown by remember { mutableStateOf(true) }
+    var selectionMode by remember { mutableStateOf(false) }
+    var currentVisibleParaIndex by remember { androidx.compose.runtime.mutableIntStateOf(0) }
+
+    // 阅读亮度（1.0 = 跟随系统）
+    var brightness by remember { mutableStateOf(1f) }
+    val view = androidx.compose.ui.platform.LocalView.current
+    // 离开阅读页时停止朗读
+    DisposableEffect(Unit) {
+        onDispose { viewModel.stopTts() }
+    }
+    DisposableEffect(brightness) {
+        val window = (view.context as? Activity)?.window
+        val old = window?.attributes?.screenBrightness
+        if (window != null) {
+            window.attributes = window.attributes.apply {
+                screenBrightness = if (brightness >= 0.99f) {
+                    WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
+                } else brightness
+            }
+        }
+        onDispose {
+            if (window != null && old != null) {
+                window.attributes = window.attributes.apply { screenBrightness = old }
+            }
+        }
+    }
+
+    // 暗色阅读背景下切换状态栏图标为浅色
+    val isDarkReader = settings.bgTheme == ReaderBgTheme.DARK || settings.bgTheme == ReaderBgTheme.BLACK
+    DisposableEffect(isDarkReader) {
+        val window = (view.context as? Activity)?.window
+        val controller = window?.let { androidx.core.view.WindowCompat.getInsetsController(it, view) }
+        val original = controller?.isAppearanceLightStatusBars
+        if (controller != null) controller.isAppearanceLightStatusBars = !isDarkReader
+        onDispose {
+            if (controller != null && original != null) controller.isAppearanceLightStatusBars = original
+        }
+    }
+
+    val exportLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("text/plain")
+    ) { uri -> viewModel.exportChapter(uri, exportMarkdown) }
+
+    BackHandler(enabled = tocOpen || settingsOpen || quotedText != null) {
+        when {
+            tocOpen -> viewModel.closeToc()
+            settingsOpen -> viewModel.closeSettings()
+            quotedText != null -> viewModel.clearQuote()
+        }
+    }
+
+    val statusBarPad = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
+    val navBarPad = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
+
+    Box(
+        Modifier
+            .fillMaxSize()
+            .background(bgColor)
+    ) {
+        // ---------- 内容 ----------
+        currentChapter?.let { chapter ->
+            val paragraphs = remember(chapter.id) { Paginator.splitParagraphs(chapter.content) }
+            val contentModifier: Modifier = Modifier
+            val content: @Composable () -> Unit = {
+                if (settings.pageMode == PageMode.PAGED) {
+                    PagedContent(
+                        chapterId = chapter.id,
+                        paragraphs = paragraphs,
+                        settings = settings,
+                        palette = palette,
+                        statusBarPad = statusBarPad,
+                        navBarPad = navBarPad,
+                        chromeVisible = chromeVisible,
+                        ttsSpeaking = ttsSpeaking,
+                        ttsPaused = ttsPaused,
+                        ttsPosition = ttsPosition,
+                        isDarkReader = isDarkReader,
+                        onToggleChrome = { viewModel.toggleChrome() },
+                        onQuote = { text, idx -> viewModel.quoteParagraph(text, idx) },
+                        onPageTurn = {
+                            haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            viewModel.scheduleProgressSave()
+                        },
+                        onVisibleParaChange = { currentVisibleParaIndex = it },
+                        onNextChapter = { viewModel.openNextChapter() },
+                        onPrevChapter = { viewModel.openPreviousChapter() },
+                        hasNextChapter = chapterIndex < chapters.lastIndex,
+                        hasPrevChapter = chapterIndex > 0,
+                        selectionMode = selectionMode,
+                        targetPageProvider = { viewModel.consumeTargetPage() }
+                    )
+                } else {
+                    ScrollContent(
+                        chapterId = chapter.id,
+                        paragraphs = paragraphs,
+                        settings = settings,
+                        palette = palette,
+                        statusBarPad = statusBarPad,
+                        navBarPad = navBarPad,
+                        ttsSpeaking = ttsSpeaking,
+                        ttsPaused = ttsPaused,
+                        ttsPosition = ttsPosition,
+                        isDarkReader = isDarkReader,
+                        onToggleChrome = { viewModel.toggleChrome() },
+                        onQuote = { text, idx -> viewModel.quoteParagraph(text, idx) },
+                        onProgress = { viewModel.scheduleProgressSave() },
+                        onVisibleParaChange = { currentVisibleParaIndex = it },
+                        selectionMode = selectionMode
+                    )
+                }
+            }
+            if (selectionMode) {
+                SelectionContainer(modifier = Modifier.fillMaxSize()) { content() }
+            } else {
+                content()
+            }
+        } ?: Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            CircularProgressIndicator(color = Color(palette.text))
+        }
+
+        // ---------- 顶栏 ----------
+        AnimatedVisibility(
+            visible = chromeVisible && !tocOpen,
+            enter = slideInVertically(spring(stiffness = 400f)) { -it } + fadeIn(),
+            exit = slideOutVertically(spring(stiffness = 400f)) { -it } + fadeOut(),
+            modifier = Modifier.align(Alignment.TopCenter)
+        ) {
+            Surface(
+                color = Color(palette.chrome).copy(alpha = 0.96f),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(Modifier.padding(top = statusBarPad)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        IconButton(onClick = onBack) {
+                            Icon(Icons.AutoMirrored.Rounded.ArrowBack, contentDescription = "返回", tint = onChromeColor)
+                        }
+                        Column(Modifier.weight(1f)) {
+                            Text(
+                                book?.title ?: "",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = secondaryColor,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            Text(
+                                currentChapter?.title ?: "",
+                                style = MaterialTheme.typography.titleMedium,
+                                color = onChromeColor,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                        IconButton(onClick = { viewModel.openToc() }) {
+                            Icon(Icons.Rounded.Menu, contentDescription = "目录", tint = onChromeColor)
+                        }
+                        // 夜间模式快捷切换
+                        IconButton(onClick = {
+                            haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            viewModel.toggleNightMode()
+                        }) {
+                            Icon(
+                                Icons.Rounded.DarkMode,
+                                contentDescription = "夜间模式",
+                                tint = if (isDarkReader) Color(0xFFFFD60A) else onChromeColor
+                            )
+                        }
+                        Box {
+                            IconButton(onClick = { showExportMenu = true }) {
+                                Icon(Icons.Rounded.MoreVert, contentDescription = "更多", tint = onChromeColor)
+                            }
+                            DropdownMenu(expanded = showExportMenu, onDismissRequest = { showExportMenu = false }) {
+                                DropdownMenuItem(
+                                    text = { Text(if (selectionMode) "关闭文字选择模式" else "文字选择模式（可复制）") },
+                                    onClick = {
+                                        showExportMenu = false
+                                        selectionMode = !selectionMode
+                                        if (selectionMode) viewModel.clearQuote()
+                                    }
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("导出本章为 Markdown") },
+                                    onClick = {
+                                        showExportMenu = false
+                                        exportMarkdown = true
+                                        exportLauncher.launch("${currentChapter?.title ?: "chapter"}.md")
+                                    }
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("导出本章为 TXT") },
+                                    onClick = {
+                                        showExportMenu = false
+                                        exportMarkdown = false
+                                        exportLauncher.launch("${currentChapter?.title ?: "chapter"}.txt")
+                                    }
+                                )
+                            }
+                        }
+                    }
+                    // 进度条
+                    Box(
+                        Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp)
+                            .height(2.dp)
+                            .background(secondaryColor.copy(alpha = 0.25f), CircleShape)
+                    ) {
+                        Box(
+                            Modifier
+                                .fillMaxWidth((chapters.size.coerceAtLeast(1)).let { total ->
+                                    ((chapterIndex + 1).coerceIn(1, total)).toFloat() / total
+                                })
+                                .height(2.dp)
+                                .background(Color(palette.text).copy(alpha = 0.5f), CircleShape)
+                        )
+                    }
+                }
+            }
+        }
+
+        // ---------- 底栏 ----------
+        val accent = if (isDarkReader) Color(0xFF9A97FF) else MaterialTheme.colorScheme.primary
+        AnimatedVisibility(
+            visible = chromeVisible && !tocOpen,
+            enter = slideInVertically(spring(stiffness = 400f)) { it } + fadeIn(),
+            exit = slideOutVertically(spring(stiffness = 400f)) { it } + fadeOut(),
+            modifier = Modifier.align(Alignment.BottomCenter)
+        ) {
+            Surface(color = Color(palette.chrome).copy(alpha = 0.96f), modifier = Modifier.fillMaxWidth()) {
+                Column {
+                // 听书控制胶囊
+                androidx.compose.animation.AnimatedVisibility(visible = ttsSpeaking || ttsPaused) {
+                    Row(
+                        Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp, vertical = 4.dp)
+                            .background(Color(palette.text).copy(alpha = 0.08f), MaterialTheme.shapes.large),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Spacer(Modifier.width(4.dp))
+                        Text(
+                            if (ttsPaused) "已暂停 · 第 ${ttsPosition + 1} 段" else "朗读中 · 第 ${ttsPosition + 1} 段",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = onChromeColor,
+                            modifier = Modifier.weight(1f),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        IconButton(onClick = {
+                            if (ttsPaused) viewModel.resumeTts() else viewModel.pauseTts()
+                        }) {
+                            Icon(
+                                if (ttsPaused) Icons.Rounded.PlayArrow else Icons.Rounded.Pause,
+                                contentDescription = if (ttsPaused) "继续" else "暂停",
+                                tint = onChromeColor,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+                        IconButton(onClick = { viewModel.toggleTts() }) {
+                            Icon(
+                                Icons.Rounded.Stop,
+                                contentDescription = "停止朗读",
+                                tint = onChromeColor,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+                    }
+                }
+                // 语速调节
+                androidx.compose.animation.AnimatedVisibility(visible = ttsSpeaking || ttsPaused) {
+                    Row(
+                        Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp, vertical = 2.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Text(
+                            "语速",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = secondaryColor
+                        )
+                        listOf(0.75f, 1.0f, 1.25f, 1.5f, 2.0f).forEach { r ->
+                            val selected = kotlin.math.abs(ttsSpeed - r) < 0.01f
+                            Text(
+                                if (r == 1.0f) "1x" else "${r}x",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = if (selected) accent else onChromeColor.copy(alpha = 0.75f),
+                                modifier = Modifier
+                                    .clip(MaterialTheme.shapes.small)
+                                    .background(
+                                        if (selected) accent.copy(alpha = 0.18f) else Color.Transparent
+                                    )
+                                    .clickable { viewModel.setTtsSpeed(r) }
+                                    .padding(horizontal = 8.dp, vertical = 4.dp)
+                            )
+                        }
+                    }
+                }
+                Row(
+                    Modifier
+                        .padding(bottom = navBarPad, top = 6.dp)
+                        .padding(horizontal = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    ReaderBarAction(Icons.Rounded.Menu, "目录", onChromeColor) { viewModel.openToc() }
+                    ReaderBarAction(Icons.Rounded.KeyboardArrowLeft, "上一章", onChromeColor) {
+                        if (chapterIndex > 0) viewModel.setChapterIndex(chapterIndex - 1)
+                    }
+                    ReaderBarAction(
+                        if (ttsSpeaking || ttsPaused) Icons.Rounded.Stop else Icons.Rounded.Headphones,
+                        "听书", if (ttsSpeaking || ttsPaused) accent else onChromeColor
+                    ) {
+                        if (ttsReady) {
+                            haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            viewModel.toggleTts(currentVisibleParaIndex)
+                        }
+                    }
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        modifier = Modifier
+                            .weight(1f)
+                            .clickable {
+                                currentChapter?.let { ch ->
+                                    onGenerate(viewModel.bookId, ch.id, "CONTINUATION")
+                                }
+                            }
+                            .padding(vertical = 6.dp)
+                    ) {
+                        Icon(
+                            Icons.Rounded.AutoAwesome,
+                            contentDescription = "AI 续写",
+                            tint = accent,
+                            modifier = Modifier.size(22.dp)
+                        )
+                        Text(
+                            "AI 续写",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = accent
+                        )
+                    }
+                    ReaderBarAction(Icons.Rounded.KeyboardArrowRight, "下一章", onChromeColor) {
+                        if (chapterIndex < chapters.lastIndex) viewModel.setChapterIndex(chapterIndex + 1)
+                    }
+                    ReaderBarAction(Icons.Rounded.Tune, "设置", onChromeColor) { viewModel.openSettings() }
+                }
+                }
+            }
+        }
+
+        // ---------- 划线即问 ----------
+        val quoteBottomPadding = when {
+            chromeVisible && (ttsSpeaking || ttsPaused) -> navBarPad + 168.dp
+            chromeVisible -> navBarPad + 84.dp
+            ttsSpeaking || ttsPaused -> navBarPad + 84.dp
+            else -> navBarPad + 28.dp
+        }
+        AnimatedVisibility(
+            visible = quotedText != null,
+            enter = slideInVertically(spring(stiffness = 380f)) { it } + fadeIn(),
+            exit = slideOutVertically(spring(stiffness = 380f)) { it } + fadeOut(),
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .padding(
+                    bottom = quoteBottomPadding,
+                    start = 16.dp,
+                    end = 16.dp
+                )
+        ) {
+            Surface(
+                shape = CircleShape,
+                color = MaterialTheme.colorScheme.surfaceContainerHighest.copy(alpha = 0.98f),
+                shadowElevation = 10.dp,
+                border = androidx.compose.foundation.BorderStroke(
+                    0.5.dp,
+                    MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)
+                )
+            ) {
+                Row(
+                    Modifier
+                        .padding(horizontal = 12.dp, vertical = 6.dp)
+                        .horizontalScroll(rememberScrollState()),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(5.dp)
+                ) {
+                    QuoteChip("从此处朗读", Icons.Rounded.PlayArrow, accent) {
+                        viewModel.playFromQuotedParagraph()
+                    }
+                    QuoteChip("解析深意", Icons.Rounded.AutoAwesome, MaterialTheme.colorScheme.primary) {
+                        val text = quotedText ?: ""
+                        viewModel.clearQuote()
+                        onAsk(viewModel.bookId, "【选段】$text\n\n【指令】请解析这段文字的深意、伏笔与表达技巧。")
+                    }
+                    QuoteChip("情绪总结", Icons.Rounded.Tune, MaterialTheme.colorScheme.secondary) {
+                        val text = quotedText ?: ""
+                        viewModel.clearQuote()
+                        onAsk(viewModel.bookId, "【选段】$text\n\n【指令】请总结这段文字的情绪基调，并分析人物心理。")
+                    }
+                    QuoteChip("AI吐槽", Icons.Rounded.AutoAwesome, Color(0xFFE91E63)) {
+                        val text = quotedText ?: ""
+                        viewModel.clearQuote()
+                        onAsk(viewModel.bookId, "【选段】$text\n\n【指令】请用轻松幽默的口吻吐槽这段文字。")
+                    }
+                    IconButton(
+                        onClick = { viewModel.clearQuote() },
+                        modifier = Modifier.size(32.dp)
+                    ) {
+                        Icon(
+                            Icons.Rounded.Close,
+                            contentDescription = "取消",
+                            modifier = Modifier.size(16.dp),
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            }
+        }
+
+        // ---------- 目录抽屉 ----------
+        AnimatedVisibility(
+            visible = tocOpen,
+            enter = fadeIn(),
+            exit = fadeOut(),
+            modifier = Modifier.matchParentSize()
+        ) {
+            Box(Modifier.fillMaxSize()) {
+                Box(
+                    Modifier
+                        .matchParentSize()
+                        .background(Color.Black.copy(alpha = 0.35f))
+                        .pointerInput(Unit) { detectTapGestures { viewModel.closeToc() } }
+                )
+                AnimatedVisibility(
+                    visible = true,
+                    enter = slideInHorizontally(spring(dampingRatio = 0.9f, stiffness = 380f)) { -it },
+                    exit = slideOutHorizontally { -it },
+                    modifier = Modifier.align(Alignment.CenterStart)
+                ) {
+                    Surface(
+                        color = bgColor,
+                        modifier = Modifier
+                            .fillMaxHeight()
+                            .fillMaxWidth(0.82f)
+                    ) {
+                        Column(Modifier.padding(top = statusBarPad + 8.dp)) {
+                            Text(
+                                "目录 · ${chapters.size} 章",
+                                style = MaterialTheme.typography.titleLarge,
+                                modifier = Modifier.padding(horizontal = 20.dp, vertical = 10.dp)
+                            )
+                            SegmentedControl(
+                                options = TocFilter.entries.toList(),
+                                selected = tocFilter,
+                                labelOf = { it.label },
+                                onSelect = { viewModel.setTocFilter(it) },
+                                modifier = Modifier.padding(horizontal = 16.dp)
+                            )
+                            Spacer(Modifier.height(6.dp))
+                            LazyColumn(Modifier.weight(1f)) {
+                                itemsIndexed(tocItems, key = { _, item -> item.chapter.id }) { _, item ->
+                                    val isCurrent = item.chapter.id == currentChapter?.id
+                                    Row(
+                                        Modifier
+                                            .fillMaxWidth()
+                                            .background(
+                                                if (isCurrent) MaterialTheme.colorScheme.primary.copy(alpha = 0.10f)
+                                                else Color.Transparent
+                                            )
+                                            .clickable {
+                                                viewModel.setChapterIndex(item.chapter.chapterIndex)
+                                                viewModel.closeToc()
+                                            }
+                                            .padding(horizontal = 20.dp, vertical = 10.dp)
+                                            .padding(start = (item.depth * 16).dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        OriginBadge(item.chapter.originType.name)
+                                        Spacer(Modifier.width(8.dp))
+                                        Text(
+                                            item.chapter.title,
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            color = if (isCurrent) MaterialTheme.colorScheme.primary
+                                            else onChromeColor,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                            modifier = Modifier.weight(1f)
+                                        )
+                                    }
+                                }
+                            }
+                            Spacer(Modifier.height(navBarPad))
+                        }
+                    }
+                }
+            }
+        }
+
+        // ---------- 阅读设置 ----------
+        if (settingsOpen) {
+            ModalBottomSheet(
+                onDismissRequest = { viewModel.closeSettings() },
+                containerColor = MaterialTheme.colorScheme.surface
+            ) {
+                ReaderSettingsSheet(
+                    settings = settings,
+                    viewModel = viewModel,
+                    brightness = brightness,
+                    onBrightnessChange = { brightness = it }
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun QuoteChip(
+    label: String,
+    icon: androidx.compose.ui.graphics.vector.ImageVector? = null,
+    color: Color,
+    onClick: () -> Unit
+) {
+    Surface(
+        shape = CircleShape,
+        color = color.copy(alpha = 0.12f),
+        onClick = onClick
+    ) {
+        Row(
+            Modifier.padding(horizontal = 8.dp, vertical = 5.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(3.dp)
+        ) {
+            if (icon != null) {
+                Icon(icon, contentDescription = null, tint = color, modifier = Modifier.size(15.dp))
+            }
+            Text(
+                label,
+                style = MaterialTheme.typography.labelMedium,
+                color = color,
+                maxLines = 1,
+                softWrap = false
+            )
+        }
+    }
+}
+
+@Composable
+private fun androidx.compose.foundation.layout.RowScope.ReaderBarAction(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    label: String,
+    tint: Color,
+    onClick: () -> Unit
+) {
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        modifier = Modifier
+            .weight(1f)
+            .clickable(onClick = onClick)
+            .padding(vertical = 6.dp)
+    ) {
+        Icon(icon, contentDescription = label, tint = tint, modifier = Modifier.size(20.dp))
+        Text(label, style = MaterialTheme.typography.labelMedium, color = tint)
+    }
+}
+
+/** 翻页模式 */
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun PagedContent(
+    chapterId: String,
+    paragraphs: List<String>,
+    settings: ReadingSettings,
+    palette: com.novelai.assistant.ui.theme.ReaderPalette,
+    statusBarPad: androidx.compose.ui.unit.Dp,
+    navBarPad: androidx.compose.ui.unit.Dp,
+    chromeVisible: Boolean,
+    ttsSpeaking: Boolean,
+    ttsPaused: Boolean,
+    ttsPosition: Int,
+    isDarkReader: Boolean,
+    onToggleChrome: () -> Unit,
+    onQuote: (String, Int) -> Unit,
+    onPageTurn: () -> Unit,
+    onVisibleParaChange: (Int) -> Unit,
+    onNextChapter: () -> Unit,
+    onPrevChapter: () -> Unit,
+    hasNextChapter: Boolean,
+    hasPrevChapter: Boolean,
+    selectionMode: Boolean,
+    targetPageProvider: () -> Int?
+) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val textMeasurer = androidx.compose.ui.text.rememberTextMeasurer()
+    val density = LocalDensity.current
+    val scope = rememberCoroutineScope()
+
+    val readerStyle = TextStyle(
+        fontSize = settings.fontSizeSp.sp,
+        lineHeight = (settings.fontSizeSp * settings.lineSpacingMultiplier).sp,
+        fontFamily = readerFontFamily(settings.serifFont),
+        color = Color(palette.text)
+    )
+    val hPadPx = with(density) { settings.horizontalPaddingDp.dp.roundToPx() }
+    val paraSpacingPx = with(density) { settings.paragraphSpacingDp.dp.roundToPx() }
+
+    BoxWithConstraints(Modifier.fillMaxSize()) {
+        val widthPx = constraints.maxWidth - hPadPx * 2
+        val chromeTopPx = with(density) { (statusBarPad + 72.dp).roundToPx() }
+        val chromeBottomPx = with(density) { (navBarPad + 64.dp).roundToPx() }
+        val heightPx = constraints.maxHeight - chromeTopPx - chromeBottomPx
+
+        val pages = remember(
+            chapterId, paragraphs, settings.fontSizeSp, settings.lineSpacingMultiplier,
+            settings.serifFont, widthPx, heightPx, settings.paragraphSpacingDp
+        ) {
+            Paginator.paginate(paragraphs, textMeasurer, readerStyle, widthPx, heightPx, paraSpacingPx)
+        }
+
+        val pagerState = rememberPagerState(pageCount = { pages.size })
+
+        LaunchedEffect(chapterId, pages) {
+            val target = targetPageProvider()
+            if (target == -1) {
+                pagerState.scrollToPage(pages.lastIndex.coerceAtLeast(0))
+            } else if (target != null && target >= 0) {
+                pagerState.scrollToPage(target.coerceIn(0, pages.lastIndex.coerceAtLeast(0)))
+            } else {
+                pagerState.scrollToPage(0)
+            }
+        }
+
+        LaunchedEffect(pagerState) {
+            snapshotFlow { pagerState.currentPage }
+                .distinctUntilChanged()
+                .collect { onPageTurn() }
+        }
+
+        // 通知当前页起始段落（供听书从当前页起播）
+        LaunchedEffect(pagerState.currentPage, pages) {
+            val firstPara = pages.getOrNull(pagerState.currentPage)?.fragments?.firstOrNull()?.paraIndex ?: 0
+            onVisibleParaChange(firstPara)
+        }
+
+        // 听书进度驱动翻页
+        LaunchedEffect(ttsPosition, ttsSpeaking, ttsPaused) {
+            if ((ttsSpeaking || ttsPaused) && ttsPosition >= 0) {
+                val targetPage = pages.indexOfFirst { page ->
+                    page.fragments.any { it.paraIndex == ttsPosition }
+                }
+                if (targetPage >= 0 && targetPage != pagerState.currentPage) {
+                    pagerState.animateScrollToPage(targetPage)
+                }
+            }
+        }
+
+        fun handleTap(screenX: Float, screenWidth: Float) {
+            if (chromeVisible) {
+                onToggleChrome()
+            } else {
+                when {
+                    screenX < screenWidth * 0.33f -> {
+                        // 左侧点击 -> 上一页 / 上一章
+                        if (pagerState.currentPage > 0) {
+                            scope.launch { pagerState.animateScrollToPage(pagerState.currentPage - 1) }
+                        } else if (hasPrevChapter) {
+                            onPrevChapter()
+                        } else {
+                            Toast.makeText(context, "已经是第一章了", Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                    screenX > screenWidth * 0.67f -> {
+                        // 右侧点击 -> 下一页 / 下一章
+                        if (pagerState.currentPage < pages.lastIndex) {
+                            scope.launch { pagerState.animateScrollToPage(pagerState.currentPage + 1) }
+                        } else if (hasNextChapter) {
+                            onNextChapter()
+                        } else {
+                            Toast.makeText(context, "已经是最后一章了", Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                    else -> {
+                        // 中间点击 -> 呼出/隐藏菜单
+                        onToggleChrome()
+                    }
+                }
+            }
+        }
+
+        val swipeModifier = if (selectionMode) Modifier else Modifier.pointerInput(
+            chapterId, pages.size, hasNextChapter, hasPrevChapter, pagerState.currentPage
+        ) {
+            awaitPointerEventScope {
+                while (true) {
+                    val down = awaitFirstDown(pass = PointerEventPass.Initial, requireUnconsumed = false)
+                    var totalDx = 0f
+                    var totalDy = 0f
+                    val pointerId = down.id
+                    val isAtEnd = pagerState.currentPage >= pages.lastIndex
+                    val isAtStart = pagerState.currentPage == 0
+
+                    while (true) {
+                        val event = awaitPointerEvent(pass = PointerEventPass.Initial)
+                        val dragChange = event.changes.firstOrNull { it.id == pointerId } ?: break
+                        if (!dragChange.pressed) {
+                            val threshold = 50.dp.toPx()
+                            val isHorizontalSwipe = kotlin.math.abs(totalDx) > threshold &&
+                                    kotlin.math.abs(totalDx) > kotlin.math.abs(totalDy) * 1.3f
+                            if (isHorizontalSwipe) {
+                                if (totalDx < -threshold && isAtEnd) {
+                                    if (hasNextChapter) {
+                                        onNextChapter()
+                                    } else {
+                                        Toast.makeText(context, "已经是最后一章了", Toast.LENGTH_SHORT).show()
+                                    }
+                                } else if (totalDx > threshold && isAtStart) {
+                                    if (hasPrevChapter) {
+                                        onPrevChapter()
+                                    } else {
+                                        Toast.makeText(context, "已经是第一章了", Toast.LENGTH_SHORT).show()
+                                    }
+                                }
+                            }
+                            break
+                        }
+                        val delta = dragChange.position - dragChange.previousPosition
+                        totalDx += delta.x
+                        totalDy += delta.y
+                    }
+                }
+            }
+        }
+
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .then(swipeModifier)
+        ) {
+            HorizontalPager(
+                state = pagerState,
+                modifier = Modifier.fillMaxSize()
+            ) { pageIndex ->
+                val page = pages.getOrNull(pageIndex) ?: return@HorizontalPager
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .pointerInput(selectionMode, chromeVisible, pagerState.currentPage, pages.size, hasNextChapter, hasPrevChapter) {
+                            if (!selectionMode) {
+                                detectTapGestures(
+                                    onTap = { offset ->
+                                        handleTap(offset.x, size.width.toFloat())
+                                    }
+                                )
+                            }
+                        }
+                ) {
+                    Column(
+                        Modifier
+                            .fillMaxSize()
+                            .padding(
+                                horizontal = settings.horizontalPaddingDp.dp,
+                                vertical = 0.dp
+                            )
+                            .padding(top = statusBarPad + 72.dp, bottom = navBarPad + 64.dp)
+                    ) {
+                        var lastParaIndex = -1
+                        page.fragments.forEach { frag ->
+                            if (lastParaIndex != -1 && frag.paraIndex != lastParaIndex) {
+                                Spacer(Modifier.height(settings.paragraphSpacingDp.dp))
+                            }
+                            lastParaIndex = frag.paraIndex
+                            val isTtsSpeakingThis = (ttsSpeaking || ttsPaused) && frag.paraIndex == ttsPosition
+                            val highlightBg = if (isTtsSpeakingThis) {
+                                if (isDarkReader) Color(0xFF9A97FF).copy(alpha = 0.22f)
+                                else MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)
+                            } else Color.Transparent
+
+                            if (selectionMode) {
+                                Text(
+                                    text = frag.text,
+                                    style = readerStyle,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .background(highlightBg, MaterialTheme.shapes.small)
+                                )
+                            } else {
+                                Text(
+                                    text = frag.text,
+                                    style = readerStyle,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .background(highlightBg, MaterialTheme.shapes.small)
+                                        .pointerInput(selectionMode, chromeVisible, pagerState.currentPage, pages.size, hasNextChapter, hasPrevChapter) {
+                                            detectTapGestures(
+                                                onLongPress = { onQuote(paragraphs[frag.paraIndex], frag.paraIndex) },
+                                                onTap = { offset ->
+                                                    val screenX = offset.x + with(density) { settings.horizontalPaddingDp.dp.toPx() }
+                                                    val screenWidth = size.width + with(density) { (settings.horizontalPaddingDp * 2).dp.toPx() }
+                                                    handleTap(screenX, screenWidth)
+                                                }
+                                            )
+                                        }
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
+            // 页码
+            Text(
+                "${pagerState.currentPage + 1} / ${pages.size}",
+                style = MaterialTheme.typography.labelMedium,
+                color = Color(palette.secondaryText),
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(bottom = navBarPad + 40.dp)
+            )
+        }
+    }
+}
+
+/** 滚动模式 */
+@Composable
+private fun ScrollContent(
+    chapterId: String,
+    paragraphs: List<String>,
+    settings: ReadingSettings,
+    palette: com.novelai.assistant.ui.theme.ReaderPalette,
+    statusBarPad: androidx.compose.ui.unit.Dp,
+    navBarPad: androidx.compose.ui.unit.Dp,
+    ttsSpeaking: Boolean,
+    ttsPaused: Boolean,
+    ttsPosition: Int,
+    isDarkReader: Boolean,
+    onToggleChrome: () -> Unit,
+    onQuote: (String, Int) -> Unit,
+    onProgress: () -> Unit,
+    onVisibleParaChange: (Int) -> Unit,
+    selectionMode: Boolean
+) {
+    val listState = rememberLazyListState()
+
+    LaunchedEffect(chapterId) { listState.scrollToItem(0) }
+    LaunchedEffect(listState) {
+        snapshotFlow { listState.firstVisibleItemIndex }
+            .distinctUntilChanged()
+            .collect {
+                onProgress()
+                onVisibleParaChange(it)
+            }
+    }
+
+    LaunchedEffect(ttsPosition, ttsSpeaking, ttsPaused) {
+        if ((ttsSpeaking || ttsPaused) && ttsPosition in paragraphs.indices) {
+            listState.animateScrollToItem(ttsPosition)
+        }
+    }
+
+    LazyColumn(
+        state = listState,
+        contentPadding = PaddingValues(
+            start = settings.horizontalPaddingDp.dp,
+            end = settings.horizontalPaddingDp.dp,
+            top = statusBarPad + 76.dp,
+            bottom = navBarPad + 72.dp
+        ),
+        modifier = Modifier
+            .fillMaxSize()
+            .pointerInput(Unit) { detectTapGestures(onTap = { onToggleChrome() }) }
+    ) {
+        itemsIndexed(paragraphs) { index, para ->
+            val isTtsSpeakingThis = (ttsSpeaking || ttsPaused) && index == ttsPosition
+            val highlightBg = if (isTtsSpeakingThis) {
+                if (isDarkReader) Color(0xFF9A97FF).copy(alpha = 0.22f)
+                else MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)
+            } else Color.Transparent
+
+            ParagraphText(
+                text = para,
+                style = TextStyle(
+                    fontSize = settings.fontSizeSp.sp,
+                    lineHeight = (settings.fontSizeSp * settings.lineSpacingMultiplier).sp,
+                    fontFamily = readerFontFamily(settings.serifFont),
+                    color = Color(palette.text)
+                ),
+                highlightBg = highlightBg,
+                selectionMode = selectionMode,
+                onTap = onToggleChrome,
+                onLongPress = { onQuote(para, index) }
+            )
+            Spacer(Modifier.height(settings.paragraphSpacingDp.dp))
+        }
+    }
+}
+
+/**
+ * 单个段落：默认模式 tap=呼出菜单、长按=划线即问；
+ * 选择模式下交给 SelectionContainer 处理自由选择与复制。
+ */
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun ParagraphText(
+    text: String,
+    style: TextStyle,
+    highlightBg: Color = Color.Transparent,
+    selectionMode: Boolean,
+    onTap: () -> Unit,
+    onLongPress: () -> Unit
+) {
+    if (selectionMode) {
+        Text(
+            text = text,
+            style = style,
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(highlightBg, MaterialTheme.shapes.small)
+        )
+    } else {
+        Text(
+            text = text,
+            style = style,
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(highlightBg, MaterialTheme.shapes.small)
+                .combinedClickable(
+                    onClick = onTap,
+                    onLongClick = onLongPress
+                )
+        )
+    }
+}
+
+/** 阅读设置面板内容 */
+@Composable
+private fun ReaderSettingsSheet(
+    settings: ReadingSettings,
+    viewModel: ReaderViewModel,
+    brightness: Float,
+    onBrightnessChange: (Float) -> Unit
+) {
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 20.dp)
+            .padding(bottom = 32.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp)
+    ) {
+        Text("阅读设置", style = MaterialTheme.typography.titleLarge)
+
+        // 亮度
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("亮度", style = MaterialTheme.typography.bodyLarge, modifier = Modifier.width(80.dp))
+            Slider(
+                value = brightness,
+                onValueChange = { onBrightnessChange((it * 100).toInt() / 100f) },
+                valueRange = 0.05f..1f,
+                modifier = Modifier.weight(1f)
+            )
+            Text(
+                if (brightness >= 0.99f) "系统" else "${(brightness * 100).toInt()}%",
+                style = MaterialTheme.typography.labelMedium,
+                modifier = Modifier.width(44.dp),
+                textAlign = androidx.compose.ui.text.style.TextAlign.End
+            )
+        }
+
+        // 字号
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(Icons.Rounded.FormatSize, contentDescription = null, Modifier.size(18.dp))
+            Spacer(Modifier.width(10.dp))
+            Text("字号", style = MaterialTheme.typography.bodyLarge, modifier = Modifier.width(52.dp))
+            IconButton(onClick = { viewModel.setFontSize(settings.fontSizeSp - 1) }) {
+                Text("A-", style = MaterialTheme.typography.titleMedium)
+            }
+            Text(
+                "${settings.fontSizeSp}",
+                style = MaterialTheme.typography.titleMedium,
+                modifier = Modifier.width(40.dp),
+                textAlign = androidx.compose.ui.text.style.TextAlign.Center
+            )
+            IconButton(onClick = { viewModel.setFontSize(settings.fontSizeSp + 1) }) {
+                Text("A+", style = MaterialTheme.typography.titleMedium)
+            }
+        }
+
+        // 行距
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("行距", style = MaterialTheme.typography.bodyLarge, modifier = Modifier.width(80.dp))
+            Slider(
+                value = settings.lineSpacingMultiplier,
+                onValueChange = { viewModel.setLineSpacing((it * 10).toInt() / 10f) },
+                valueRange = 1.2f..2.4f,
+                modifier = Modifier.weight(1f)
+            )
+        }
+
+        // 边距
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("边距", style = MaterialTheme.typography.bodyLarge, modifier = Modifier.width(80.dp))
+            Slider(
+                value = settings.horizontalPaddingDp.toFloat(),
+                onValueChange = { viewModel.setHorizontalPadding(it.toInt()) },
+                valueRange = 8f..48f,
+                modifier = Modifier.weight(1f)
+            )
+        }
+
+        // 段距
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("段距", style = MaterialTheme.typography.bodyLarge, modifier = Modifier.width(80.dp))
+            Slider(
+                value = settings.paragraphSpacingDp.toFloat(),
+                onValueChange = { viewModel.setParagraphSpacing(it.toInt()) },
+                valueRange = 2f..28f,
+                modifier = Modifier.weight(1f)
+            )
+        }
+
+        // 背景主题
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("背景", style = MaterialTheme.typography.bodyLarge, modifier = Modifier.width(80.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                ReaderBgTheme.entries.forEach { theme ->
+                    val p = ReaderPalettes.of(theme.name)
+                    val selected = settings.bgTheme == theme
+                    Box(
+                        Modifier
+                            .size(36.dp)
+                            .background(Color(p.background), CircleShape)
+                            .border(
+                                width = if (selected) 2.5.dp else 0.5.dp,
+                                color = if (selected) MaterialTheme.colorScheme.primary
+                                else MaterialTheme.colorScheme.outline,
+                                shape = CircleShape
+                            )
+                            .clickable { viewModel.setBgTheme(theme) },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text("文", color = Color(p.text), style = MaterialTheme.typography.labelMedium)
+                    }
+                }
+            }
+        }
+
+        // 衬线
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("衬线字体", style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
+            Switch(checked = settings.serifFont, onCheckedChange = { viewModel.setSerif(it) })
+        }
+
+        // 翻页模式
+        Text("翻页模式", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
+            SegmentedButton(
+                selected = settings.pageMode == PageMode.SCROLL,
+                onClick = { viewModel.setPageMode(PageMode.SCROLL) },
+                shape = SegmentedButtonDefaults.itemShape(0, 2)
+            ) { Text("上下滚动") }
+            SegmentedButton(
+                selected = settings.pageMode == PageMode.PAGED,
+                onClick = { viewModel.setPageMode(PageMode.PAGED) },
+                shape = SegmentedButtonDefaults.itemShape(1, 2)
+            ) { Text("左右翻页") }
+        }
+    }
+}
