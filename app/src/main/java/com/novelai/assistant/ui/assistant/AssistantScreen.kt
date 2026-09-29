@@ -403,16 +403,7 @@ private fun ChatBubble(record: AiChatRecordEntity, isStreaming: Boolean = false)
             ),
             color = if (isUser) MaterialTheme.colorScheme.primary
             else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f),
-            modifier = Modifier
-                .widthIn(max = 310.dp)
-                .combinedClickable(
-                    onClick = {},
-                    onLongClick = {
-                        haptics.performHapticFeedback(HapticFeedbackType.LongPress)
-                        clipboardManager.setText(AnnotatedString(record.content))
-                        Toast.makeText(context, "已复制消息内容", Toast.LENGTH_SHORT).show()
-                    }
-                )
+            modifier = Modifier.widthIn(max = 310.dp)
         ) {
             SelectionContainer {
                 Text(

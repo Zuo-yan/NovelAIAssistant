@@ -273,7 +273,7 @@ private fun GlassBottomBar(
         verticalAlignment = Alignment.CenterVertically
     ) {
         TopLevelDestination.entries.forEach { dest ->
-            val selected = currentRoute == dest.route
+            val selected = currentRoute?.startsWith(dest.route) == true
             Column(
                 modifier = Modifier
                     .weight(1f)

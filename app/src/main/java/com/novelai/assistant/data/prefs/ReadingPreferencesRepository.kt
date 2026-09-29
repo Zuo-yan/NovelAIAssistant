@@ -44,7 +44,7 @@ class ReadingPreferencesRepository @Inject constructor(
         val lineSpacing = floatPreferencesKey("reader_line_spacing")
         val hPadding = intPreferencesKey("reader_h_padding")
         val paraSpacing = intPreferencesKey("reader_para_spacing")
-        val pageMode = stringPreferencesKey("reader_page_mode")
+        val pageMode = stringPreferencesKey("reader_page_mode_v2")
         val bgTheme = stringPreferencesKey("reader_bg_theme")
         val serif = booleanPreferencesKey("reader_serif")
         val appTheme = stringPreferencesKey("app_theme_mode")

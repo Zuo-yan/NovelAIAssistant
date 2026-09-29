@@ -71,6 +71,7 @@ fun SettingsScreen(
     val loadingRouteModels by viewModel.loadingRouteModels.collectAsStateWithLifecycle()
 
     var routeScene by remember { mutableStateOf<TaskScene?>(null) }
+    var confirmResetUsage by remember { mutableStateOf(false) }
     val haptics = LocalHapticFeedback.current
 
     Column(
@@ -200,7 +201,7 @@ fun SettingsScreen(
             SettingRow(
                 title = "清空统计",
                 icon = Icons.Rounded.Delete,
-                onClick = { viewModel.resetUsage() }
+                onClick = { confirmResetUsage = true }
             )
         }
 
@@ -234,13 +235,37 @@ fun SettingsScreen(
 
         Spacer(Modifier.height(20.dp))
 
-        SectionCard(title = "关于", footer = "AI 智阅小说 v0.3.0 · 本地阅读 + AI 伴读续写 · 隐私数据仅存本机") {
+        SectionCard(title = "关于", footer = "AI 智阅小说 v${com.novelai.assistant.BuildConfig.VERSION_NAME} · 本地阅读 + AI 伴读续写 · 隐私数据仅存本机") {
             SettingRow(
                 title = "手势提示",
                 subtitle = "阅读页点按中间唤出菜单；长按段落「划线即问」",
                 icon = Icons.Rounded.ColorLens
             )
         }
+    }
+
+    // 清空用量统计确认弹窗
+    if (confirmResetUsage) {
+        AlertDialog(
+            onDismissRequest = { confirmResetUsage = false },
+            title = { Text("清空用量统计？") },
+            text = { Text("确定要重置当前设备记录的累计输入与输出 Token 统计吗？此操作无法撤销。") },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        confirmResetUsage = false
+                        viewModel.resetUsage()
+                    }
+                ) {
+                    Text("清空", color = MaterialTheme.colorScheme.error)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmResetUsage = false }) {
+                    Text("取消")
+                }
+            }
+        )
     }
 
     // 任务分流配置弹窗
