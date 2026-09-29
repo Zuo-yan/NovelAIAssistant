@@ -222,11 +222,14 @@ fun NovelApp() {
                 Routes.TREE,
                 arguments = listOf(navArgument("bookId") { type = NavType.StringType })
             ) { entry ->
+                val bid = entry.arguments?.getString("bookId").orEmpty()
                 BranchTreeScreen(
-                    bookId = entry.arguments?.getString("bookId").orEmpty(),
+                    bookId = bid,
                     onOpenChapter = { chapterIndex ->
-                        val bid = entry.arguments?.getString("bookId").orEmpty()
                         navController.navigate(Routes.readerAt(bid, chapterIndex))
+                    },
+                    onContinueChapter = { chapterId, mode ->
+                        navController.navigate(Routes.generate(bid, chapterId, mode))
                     },
                     onBack = { navController.popBackStack() }
                 )

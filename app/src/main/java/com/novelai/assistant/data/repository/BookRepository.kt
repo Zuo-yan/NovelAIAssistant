@@ -119,6 +119,33 @@ class BookRepository @Inject constructor(
         val chapter = chapterDao.getById(chapterId) ?: return
         chapterDao.updateContent(chapterId, chapter.content + extra)
     }
+
+    /**
+     * 获取指定章节的完整前文剧情线（自动处理主线与平行分支宇宙）：
+     * - 如果目标章节属于分支，沿 parentChapterId 逆向追溯直到最初分叉的原文主线，再向前拼接主线前文
+     * - 完美剔除当前分支世界线之外的无关章节
+     */
+    suspend fun getChapterLineage(bookId: String, targetChapterId: String): List<ChapterEntity> {
+        val all = chapterDao.getByBook(bookId)
+        val target = all.firstOrNull { it.id == targetChapterId } ?: return emptyList()
+        val byId = all.associateBy { it.id }
+        val branchChain = mutableListOf<ChapterEntity>()
+        var cur: ChapterEntity? = target
+        val visited = mutableSetOf<String>()
+
+        while (cur != null && cur.id !in visited) {
+            visited.add(cur.id)
+            branchChain.add(cur)
+            if (cur.originType == ChapterOriginType.ORIGINAL) {
+                val originalHead = all
+                    .filter { it.originType == ChapterOriginType.ORIGINAL && it.chapterIndex < cur.chapterIndex }
+                    .sortedBy { it.chapterIndex }
+                return originalHead + branchChain.reversed()
+            }
+            cur = cur.parentChapterId?.let { byId[it] }
+        }
+        return branchChain.reversed()
+    }
 }
 
 @Singleton

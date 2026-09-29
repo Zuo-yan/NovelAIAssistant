@@ -75,6 +75,7 @@ class ContinuationViewModel @Inject constructor(
     private val _error = MutableStateFlow<String?>(null)
     val error: StateFlow<String?> = _error.asStateFlow()
 
+    val continuousCount = MutableStateFlow(0)
     private val _savedChapterId = MutableStateFlow<String?>(null)
     val savedChapterId: StateFlow<String?> = _savedChapterId.asStateFlow()
 
@@ -120,11 +121,12 @@ class ContinuationViewModel @Inject constructor(
             val builder = StringBuilder()
             val craft = _useWorkshopCraft.value
             try {
+                val lineage = bookRepository.getChapterLineage(bookId, parent.id)
                 val messages = if (isBranchMode) {
-                    PromptBuilder.branchMessages(book, parent, instructionText.ifBlank { "自由推演一个有趣的平行分支" }, craft)
+                    PromptBuilder.branchMessages(book, parent, instructionText.ifBlank { "自由推演一个有趣的平行分支" }, lineage, craft)
                 } else {
-                    val previous = bookRepository.getChapters(bookId)
-                        .filter { it.chapterIndex <= parent.chapterIndex }
+                    val previous = if (lineage.isNotEmpty()) lineage
+                    else bookRepository.getChapters(bookId).filter { it.chapterIndex <= parent.chapterIndex }
                     PromptBuilder.continuationMessages(book, previous, instructionText, craft)
                 }
 
@@ -168,6 +170,47 @@ class ContinuationViewModel @Inject constructor(
             bookRepository.appendToChapter(parentChapterId, "\n\n$text")
             retrievalService.evict(bookId)
             onDone()
+        }
+    }
+
+    /** 保存当前章节并自动将新章设为基准章节，支持连续无限续写 */
+    fun saveAndContinue(autoGenerateNext: Boolean = false) {
+        val text = _streamingText.value.trim()
+        if (text.isBlank()) return
+        viewModelScope.launch {
+            val defaultTitle = if (isBranchMode) {
+                val branchSuffix = if (continuousCount.value > 0) " · 第 ${continuousCount.value + 1} 节" else ""
+                "分支：${instruction.value.trim().take(10).ifBlank { "平行世界" }}$branchSuffix"
+            } else {
+                "AI 续写 · 第 ${(_parentChapter.value?.chapterIndex ?: 0) + 2} 章"
+            }
+            val title = customTitle.value.trim().ifBlank { defaultTitle }
+            val chapter = bookRepository.saveGeneratedChapter(
+                bookId = bookId,
+                parentChapterId = if (isBranchMode) _parentChapterId.value else null,
+                title = title,
+                content = text,
+                promptUsed = instruction.value.trim().ifBlank { null },
+                originType = if (isBranchMode) ChapterOriginType.AI_BRANCH else ChapterOriginType.AI_CONTINUATION
+            )
+            retrievalService.evict(bookId)
+            _savedChapterId.value = chapter.id
+            continuousCount.value += 1
+
+            // 关键：将刚刚生成保存的新章切换为下一章的前置基准
+            _parentChapterId.value = chapter.id
+            _parentChapter.value = chapter
+            _allChapters.value = bookRepository.getChapters(bookId)
+            _book.value = bookRepository.getBook(bookId)
+
+            _streamingText.value = ""
+            _finished.value = false
+            customTitle.value = ""
+            _error.value = null
+
+            if (autoGenerateNext) {
+                generate()
+            }
         }
     }
 

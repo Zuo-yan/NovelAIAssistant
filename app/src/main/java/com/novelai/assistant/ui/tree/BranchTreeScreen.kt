@@ -72,6 +72,7 @@ class BranchTreeViewModel @Inject constructor(
 fun BranchTreeScreen(
     bookId: String,
     onOpenChapter: (chapterIndex: Int) -> Unit,
+    onContinueChapter: (chapterId: String, mode: String) -> Unit = { _, _ -> },
     onBack: () -> Unit,
     viewModel: BranchTreeViewModel = hiltViewModel()
 ) {
@@ -89,7 +90,33 @@ fun BranchTreeScreen(
         }
         return d
     }
-    val treeItems = chapters.map { it to depth(it) }
+
+    // 树形层级排序：主线章节依次展开，分支与衍生章节紧跟对应父节点下方
+    val treeItems = androidx.compose.runtime.remember(chapters) {
+        val result = mutableListOf<Pair<ChapterEntity, Int>>()
+        val processed = mutableSetOf<String>()
+
+        fun appendSubtree(parent: ChapterEntity) {
+            val children = chapters.filter { it.parentChapterId == parent.id }
+            for (child in children) {
+                if (child.id in processed) continue
+                result.add(child to depth(child))
+                processed.add(child.id)
+                appendSubtree(child)
+            }
+        }
+
+        for (ch in chapters) {
+            if (ch.id in processed) continue
+            if (ch.parentChapterId == null || byId[ch.parentChapterId] == null) {
+                result.add(ch to depth(ch))
+                processed.add(ch.id)
+                appendSubtree(ch)
+            }
+        }
+        chapters.filter { it.id !in processed }.forEach { result.add(it to depth(it)) }
+        result
+    }
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
@@ -178,6 +205,19 @@ fun BranchTreeScreen(
                                     overflow = TextOverflow.Ellipsis
                                 )
                             }
+                        }
+                        // 节点快捷续写/推演分支
+                        androidx.compose.material3.TextButton(
+                            onClick = {
+                                onContinueChapter(chapter.id, "BRANCH")
+                            },
+                            contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 6.dp, vertical = 2.dp)
+                        ) {
+                            Text(
+                                if (isBranch) "续写此分支" else "+ 分支",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = if (isBranch) com.novelai.assistant.ui.theme.NovelColors.BadgeBranch else MaterialTheme.colorScheme.primary
+                            )
                         }
                     }
                 }

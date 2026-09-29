@@ -7,6 +7,8 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
@@ -67,6 +69,7 @@ fun ContinuationScreen(
     val error by viewModel.error.collectAsStateWithLifecycle()
     val useCraft by viewModel.useWorkshopCraft.collectAsStateWithLifecycle()
     val allChapters by viewModel.allChapters.collectAsStateWithLifecycle()
+    val continuousCount by viewModel.continuousCount.collectAsStateWithLifecycle()
     val haptics = LocalHapticFeedback.current
     var showChapterPicker by remember { mutableStateOf(false) }
     var titleDraft by remember { mutableStateOf("") }
@@ -102,6 +105,32 @@ fun ContinuationScreen(
                 .padding(top = 10.dp, bottom = 20.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
+            if (continuousCount > 0) {
+                Surface(
+                    shape = MaterialTheme.shapes.medium,
+                    color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            Icons.Rounded.AutoAwesome,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        Text(
+                            "连续创作中 · 已连续生成并保存 $continuousCount 章，当前正基于最新章节衔接！",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onPrimaryContainer
+                        )
+                    }
+                }
+            }
+
             // 基准章节卡（可切换）
             Surface(
                 shape = MaterialTheme.shapes.large,
@@ -174,25 +203,39 @@ fun ContinuationScreen(
                             viewModel.customTitle.value = it
                         },
                         label = { Text("章节标题（可自定义，留空自动命名）") },
-                        placeholder = { Text("AI 续写 · ${parent?.title?.take(12) ?: "新章"}") },
+                        placeholder = {
+                            Text(
+                                if (viewModel.isBranchMode) "分支：${instruction.take(10).ifBlank { "平行世界" }}"
+                                else "AI 续写 · ${parent?.title?.take(12) ?: "新章"}"
+                            )
+                        },
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth()
                     )
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
                         Button(
+                            onClick = {
+                                haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                                viewModel.saveAndContinue(autoGenerateNext = false)
+                                titleDraft = ""
+                            },
+                            modifier = Modifier.weight(1.3f)
+                        ) {
+                            Icon(Icons.Rounded.AutoAwesome, contentDescription = null, Modifier.height(18.dp))
+                            Spacer(Modifier.width(4.dp))
+                            Text("保存并续写下一章", maxLines = 1)
+                        }
+                        OutlinedButton(
                             onClick = {
                                 haptics.performHapticFeedback(HapticFeedbackType.LongPress)
                                 viewModel.save(onSaved)
                             },
-                            modifier = Modifier.weight(1.2f)
+                            modifier = Modifier.weight(1f)
                         ) {
-                            Icon(
-                                if (viewModel.isBranchMode) Icons.Rounded.CallMerge else Icons.Rounded.AutoAwesome,
-                                contentDescription = null,
-                                Modifier.height(18.dp)
-                            )
-                            Text(if (viewModel.isBranchMode) " 存为[分]章" else " 存为[AI]章", maxLines = 1)
+                            Text("保存并退出", maxLines = 1)
                         }
+                    }
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
                         if (!viewModel.isBranchMode) {
                             OutlinedButton(
                                 onClick = {
@@ -200,9 +243,12 @@ fun ContinuationScreen(
                                     viewModel.appendToParentChapter(onSaved)
                                 },
                                 modifier = Modifier.weight(1f)
-                            ) { Text("追加本章", maxLines = 1) }
+                            ) { Text("追加到本章末", maxLines = 1) }
                         }
-                        OutlinedButton(onClick = { viewModel.reset() }) { Text("重新生成", maxLines = 1) }
+                        OutlinedButton(
+                            onClick = { viewModel.reset() },
+                            modifier = Modifier.weight(1f)
+                        ) { Text("重写本章", maxLines = 1) }
                     }
                 }
                 else -> {

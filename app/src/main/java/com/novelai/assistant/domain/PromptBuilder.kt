@@ -63,24 +63,53 @@ object PromptBuilder {
         book: BookEntity,
         parentChapter: ChapterEntity,
         whatIf: String,
+        lineageChapters: List<ChapterEntity> = emptyList(),
         useWorkshopCraft: Boolean = true
     ): List<ChatMessage> {
+        val isFirstBranchChapter = parentChapter.originType != com.novelai.assistant.data.db.ChapterOriginType.AI_BRANCH
+        val samples = (if (lineageChapters.isNotEmpty()) lineageChapters else listOf(parentChapter))
+            .takeLast(4).joinToString("\n\n") { ch ->
+                "【《${book.title}》${ch.title}节选】\n" + ch.content.takeLast(STYLE_SAMPLE_CHARS)
+            }
+
         val system = buildString {
-            appendLine("你是资深小说作者。用户希望为《${book.title}》推演一个「平行宇宙」分支剧情。")
-            appendLine("请模仿以下原文的行文风格（叙事口吻、用词、句式、对话风格）：")
-            appendLine(parentChapter.content.takeLast(STYLE_SAMPLE_CHARS))
+            appendLine("你是资深小说作者。正在为《${book.title}》推演并创作「平行宇宙」分支故事。")
+            if (isFirstBranchChapter) {
+                appendLine("本章为分支故事的开启章，从指定分叉点出发，根据设定假设发生关键剧情转向。")
+            } else {
+                appendLine("本分支故事已展开，请根据该分支已有前文因果与剧情发展，紧密衔接继续创作下一章。")
+            }
+            appendLine("请严格模仿以下原文及分支前文的行文风格（叙事口吻、句式、用词习惯、对话特色）：")
+            appendLine(samples)
             appendLine()
-            appendLine("要求：")
-            appendLine("1. 从原作指定剧情点出发，按照「假设」重写后续走向，形成一条新的剧情线；")
-            appendLine("2. 输出纯正文，不要解释、不要标注、不要复述原文；")
-            appendLine("3. 人物性格保持一致，但剧情走向必须体现假设带来的改变。")
+            appendLine("写作要求：")
+            appendLine("1. 直接输出纯正文，不要任何解释、前言、章节标题标注或元评论；")
+            appendLine("2. 保持人物性格一致，充分体现分支宇宙带来的因果改变与新戏剧冲突；")
+            if (whatIf.isNotBlank()) {
+                appendLine("3. 分支核心设定 / 作者指令：$whatIf")
+            } else {
+                appendLine("3. 情节自然推进，塑造高潮或悬念转折。")
+            }
             if (useWorkshopCraft) {
                 appendLine()
                 appendLine(AiSkills.NOVEL_WORKSHOP.systemPrompt)
             }
         }
-        val user = "假设（What-if）：$whatIf\n\n以下是需要改写的原章《${parentChapter.title}》结尾：\n" +
-            parentChapter.content.takeLast(CONTEXT_TAIL_CHARS)
+        val user = buildString {
+            if (isFirstBranchChapter) {
+                appendLine("【平行世界假设（What-if）】$whatIf")
+                appendLine()
+                appendLine("以下是分叉节点《${parentChapter.title}》的结尾，请从此处开始推演新分支：")
+                append(parentChapter.content.takeLast(CONTEXT_TAIL_CHARS))
+            } else {
+                if (whatIf.isNotBlank()) {
+                    appendLine("【本分支后续发展要求】$whatIf")
+                    appendLine()
+                }
+                appendLine("以下是本分支上一章《${parentChapter.title}》的结尾，请紧密承接继续写下一章正文：")
+                append(parentChapter.content.takeLast(CONTEXT_TAIL_CHARS))
+            }
+        }
         return listOf(ChatMessage("system", system), ChatMessage("user", user))
     }
 
