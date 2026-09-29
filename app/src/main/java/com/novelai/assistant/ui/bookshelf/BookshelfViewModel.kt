@@ -85,4 +85,15 @@ class BookshelfViewModel @Inject constructor(
         if (name.isBlank()) return
         viewModelScope.launch { categoryRepository.addCategory(name) }
     }
+
+    fun deleteCategory(name: String) {
+        if (name == "全部" || name.isBlank()) return
+        viewModelScope.launch {
+            categoryRepository.deleteCategoryByName(name)
+            bookRepository.resetCategoryBooks(name)
+            if (selectedCategory.value == name) {
+                selectedCategory.value = "全部"
+            }
+        }
+    }
 }

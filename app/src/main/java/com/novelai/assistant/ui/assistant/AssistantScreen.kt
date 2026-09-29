@@ -26,10 +26,23 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Send
+import androidx.compose.material.icons.rounded.DeleteOutline
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.TextButton
+import android.widget.Toast
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.material.icons.rounded.Stop
 import androidx.compose.material.icons.rounded.Visibility
 import androidx.compose.material.icons.rounded.VisibilityOff
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.foundation.layout.size
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -87,11 +100,13 @@ fun AssistantScreen(
         if (currentBookId.isBlank() && books.isNotEmpty()) viewModel.selectBook(books.first().id)
     }
 
-    // 自动滚动到底部
-    LaunchedEffect(chatRecords.size, streamingText) {
-        val count = chatRecords.size + if (streamingText.isNotBlank()) 1 else 0
+    // 自动滚动到底部（包含思考状态与流式响应）
+    LaunchedEffect(chatRecords.size, streamingText, generating) {
+        val count = chatRecords.size + (if (generating || streamingText.isNotBlank()) 1 else 0)
         if (count > 0) listState.animateScrollToItem((count - 1).coerceAtLeast(0))
     }
+
+    var confirmClearChat by remember { mutableStateOf(false) }
 
     Column(
         Modifier
@@ -99,7 +114,21 @@ fun AssistantScreen(
             .statusBarsPadding()
             .imePadding()
     ) {
-        LargeTitleHeader(title = "AI 助手", subtitle = "伴读 · 划线即问 · 全书回忆")
+        LargeTitleHeader(
+            title = "AI 助手",
+            subtitle = "伴读 · 划线即问 · 全书回忆",
+            actions = {
+                if (chatRecords.isNotEmpty()) {
+                    IconButton(onClick = { confirmClearChat = true }) {
+                        Icon(
+                            Icons.Rounded.DeleteOutline,
+                            contentDescription = "清空聊天记录",
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            }
+        )
 
         // 书籍选择 + 不剧透开关
         LazyRow(
@@ -238,8 +267,13 @@ fun AssistantScreen(
                 itemsIndexed(chatRecords, key = { _, r -> r.id }) { _, record ->
                     ChatBubble(record)
                 }
+                if (generating && streamingText.isBlank()) {
+                    item(key = "thinking_indicator") {
+                        ThinkingBubble()
+                    }
+                }
                 if (streamingText.isNotBlank()) {
-                    item {
+                    item(key = "streaming_bubble") {
                         ChatBubble(
                             AiChatRecordEntity(
                                 id = "streaming", bookId = "", chapterId = null,
@@ -264,17 +298,25 @@ fun AssistantScreen(
 
         // 输入栏
         Surface(tonalElevation = 2.dp) {
-            Row(
-                Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 14.dp, vertical = 10.dp),
-                verticalAlignment = Alignment.Bottom,
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                OutlinedTextField(
-                    value = input,
-                    onValueChange = { input = it },
-                    placeholder = { Text("问问这本书…") },
+            Column {
+                if (generating) {
+                    LinearProgressIndicator(
+                        modifier = Modifier.fillMaxWidth().height(2.dp),
+                        color = MaterialTheme.colorScheme.primary,
+                        trackColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)
+                    )
+                }
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 14.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.Bottom,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    OutlinedTextField(
+                        value = input,
+                        onValueChange = { input = it },
+                        placeholder = { Text(if (generating) "AI 正在思考与回答中…" else "问问这本书…") },
                     modifier = Modifier.weight(1f),
                     maxLines = 4,
                     shape = RoundedCornerShape(20.dp)
@@ -313,12 +355,41 @@ fun AssistantScreen(
                 }
             }
         }
+        }
+    }
+
+    if (confirmClearChat) {
+        AlertDialog(
+            onDismissRequest = { confirmClearChat = false },
+            title = { Text("清空聊天记录？") },
+            text = { Text("确定要清空当前书籍的所有伴读问答记录吗？此操作无法撤销。") },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        confirmClearChat = false
+                        viewModel.clearChat()
+                    }
+                ) {
+                    Text("清空", color = MaterialTheme.colorScheme.error)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmClearChat = false }) {
+                    Text("取消")
+                }
+            }
+        )
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun ChatBubble(record: AiChatRecordEntity, isStreaming: Boolean = false) {
     val isUser = record.role == "user"
+    val clipboardManager = LocalClipboardManager.current
+    val context = LocalContext.current
+    val haptics = LocalHapticFeedback.current
+
     Row(
         Modifier.fillMaxWidth(),
         horizontalArrangement = if (isUser) Arrangement.End else Arrangement.Start
@@ -331,16 +402,63 @@ private fun ChatBubble(record: AiChatRecordEntity, isStreaming: Boolean = false)
                 bottomEnd = if (isUser) 4.dp else 18.dp
             ),
             color = if (isUser) MaterialTheme.colorScheme.primary
-            else MaterialTheme.colorScheme.surface,
+            else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f),
+            modifier = Modifier
+                .widthIn(max = 310.dp)
+                .combinedClickable(
+                    onClick = {},
+                    onLongClick = {
+                        haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                        clipboardManager.setText(AnnotatedString(record.content))
+                        Toast.makeText(context, "已复制消息内容", Toast.LENGTH_SHORT).show()
+                    }
+                )
+        ) {
+            SelectionContainer {
+                Text(
+                    text = if (isStreaming) "${record.content} ▌" else record.content,
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = if (isUser) MaterialTheme.colorScheme.onPrimary
+                    else MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp)
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun ThinkingBubble() {
+    Row(
+        Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.Start
+    ) {
+        Surface(
+            shape = RoundedCornerShape(
+                topStart = 18.dp,
+                topEnd = 18.dp,
+                bottomStart = 4.dp,
+                bottomEnd = 18.dp
+            ),
+            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),
             modifier = Modifier.widthIn(max = 310.dp)
         ) {
-            Text(
-                record.content,
-                style = MaterialTheme.typography.bodyLarge,
-                color = if (isUser) MaterialTheme.colorScheme.onPrimary
-                else MaterialTheme.colorScheme.onSurface,
-                modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp)
-            )
+            Row(
+                Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                CircularProgressIndicator(
+                    modifier = Modifier.size(16.dp),
+                    strokeWidth = 2.dp,
+                    color = MaterialTheme.colorScheme.primary
+                )
+                Text(
+                    "AI 正在思考并检索小说章节…",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
         }
     }
 }

@@ -27,8 +27,11 @@ import androidx.compose.foundation.lazy.items as listItems
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Add
+import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.CallMerge
 import androidx.compose.material.icons.rounded.Delete
+import androidx.compose.material.icons.rounded.DeleteOutline
+import androidx.compose.material3.TextButton
 import androidx.compose.material.icons.rounded.DriveFileMove
 import androidx.compose.material.icons.rounded.GridView
 import androidx.compose.material.icons.rounded.Menu
@@ -92,6 +95,7 @@ fun BookshelfScreen(
     val haptics = LocalHapticFeedback.current
 
     var showAddCategory by remember { mutableStateOf(false) }
+    var categoryToDelete by remember { mutableStateOf<String?>(null) }
     var newCategoryName by remember { mutableStateOf("") }
     var actionBook by remember { mutableStateOf<BookEntity?>(null) }
     var moveBook by remember { mutableStateOf<BookEntity?>(null) }
@@ -142,10 +146,27 @@ fun BookshelfScreen(
                 contentPadding = PaddingValues(horizontal = 20.dp, vertical = 4.dp)
             ) {
                 listItems(categories) { cat ->
+                    val isSelected = cat == currentCategory
+                    val isCustom = cat != "全部"
                     FilterChip(
-                        selected = cat == currentCategory,
-                        onClick = { viewModel.selectCategory(cat) },
+                        selected = isSelected,
+                        onClick = {
+                            if (isSelected && isCustom) {
+                                categoryToDelete = cat
+                            } else {
+                                viewModel.selectCategory(cat)
+                            }
+                        },
                         label = { Text(cat) },
+                        trailingIcon = if (isCustom && isSelected) {
+                            {
+                                Icon(
+                                    Icons.Rounded.Close,
+                                    contentDescription = "删除书单",
+                                    modifier = Modifier.size(14.dp)
+                                )
+                            }
+                        } else null,
                         colors = FilterChipDefaults.filterChipColors(
                             selectedContainerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.16f),
                             selectedLabelColor = MaterialTheme.colorScheme.primary
@@ -165,11 +186,29 @@ fun BookshelfScreen(
 
             if (books.isEmpty()) {
                 Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
-                    EmptyState(
-                        icon = Icons.Rounded.UploadFile,
-                        title = "书架空空如也",
-                        hint = "点击右上角导入 TXT / Markdown / EPUB\n或使用「发现」页的下载工具"
-                    )
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        EmptyState(
+                            icon = Icons.Rounded.UploadFile,
+                            title = if (currentCategory == "全部") "书架空空如也" else "「$currentCategory」书单为空",
+                            hint = if (currentCategory == "全部") "点击右上角导入 TXT / Markdown / EPUB\n或使用「发现」页的下载工具"
+                            else "长按书籍可将其移动到此书单"
+                        )
+                        if (currentCategory != "全部") {
+                            Spacer(Modifier.height(12.dp))
+                            TextButton(
+                                onClick = { categoryToDelete = currentCategory }
+                            ) {
+                                Icon(
+                                    Icons.Rounded.DeleteOutline,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(16.dp),
+                                    tint = MaterialTheme.colorScheme.error
+                                )
+                                Spacer(Modifier.width(4.dp))
+                                Text("删除此书单", color = MaterialTheme.colorScheme.error)
+                            }
+                        }
+                    }
                 }
             } else if (viewMode == ShelfViewMode.GRID) {
                 LazyVerticalGrid(
@@ -278,6 +317,30 @@ fun BookshelfScreen(
             },
             dismissButton = {
                 TextButton(onClick = { showAddCategory = false }) { Text("取消") }
+            }
+        )
+    }
+
+    // 删除书单确认
+    categoryToDelete?.let { cat ->
+        AlertDialog(
+            onDismissRequest = { categoryToDelete = null },
+            title = { Text("删除书单「$cat」？") },
+            text = { Text("该书单将被删除，该书单下的书籍将保留在书架中（移至默认分类）。") },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        categoryToDelete = null
+                        viewModel.deleteCategory(cat)
+                    }
+                ) {
+                    Text("删除", color = MaterialTheme.colorScheme.error)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { categoryToDelete = null }) {
+                    Text("取消")
+                }
             }
         )
     }

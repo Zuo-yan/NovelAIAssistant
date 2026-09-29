@@ -82,6 +82,7 @@ class BookRepository @Inject constructor(
     }
 
     suspend fun updateCategory(bookId: String, category: String) = bookDao.updateCategory(bookId, category)
+    suspend fun resetCategoryBooks(categoryName: String) = bookDao.resetCategoryBooks(categoryName)
 
     suspend fun updateChapter(chapter: ChapterEntity) = chapterDao.update(chapter)
 
@@ -142,4 +143,5 @@ class CategoryRepository @Inject constructor(
     suspend fun addCategory(name: String) =
         categoryDao.insert(CategoryEntity(id = UUID.randomUUID().toString(), name = name.trim()))
     suspend fun deleteCategory(id: String) = categoryDao.delete(id)
+    suspend fun deleteCategoryByName(name: String) = categoryDao.deleteByName(name)
 }

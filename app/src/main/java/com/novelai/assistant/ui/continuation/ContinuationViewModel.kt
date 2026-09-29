@@ -108,6 +108,7 @@ class ContinuationViewModel @Inject constructor(
         val active = aiConfigRepository.resolveActive(TaskScene.CONTINUATION)
             ?: run { _error.value = "尚未配置「续写场景」模型，请到设置页配置"; return }
         val (provider, model) = active
+        val effectiveProvider = provider.copy(selectedModel = model)
         val instructionText = instruction.value.trim()
 
         generateJob = viewModelScope.launch {
@@ -130,8 +131,8 @@ class ContinuationViewModel @Inject constructor(
                 var promptTokens = 0L
                 var completionTokens = 0L
 
-                aiClientFactory.clientFor(provider.kind)
-                    .streamChat(provider, messages, provider.maxTokens, provider.temperature)
+                aiClientFactory.clientFor(effectiveProvider.kind)
+                    .streamChat(effectiveProvider, messages, effectiveProvider.maxTokens, effectiveProvider.temperature)
                     .collect { event ->
                         when (event) {
                             is StreamEvent.Delta -> {

@@ -33,6 +33,9 @@ interface BookDao {
 
     @Query("UPDATE books SET category = :category WHERE id = :bookId")
     suspend fun updateCategory(bookId: String, category: String)
+
+    @Query("UPDATE books SET category = '默认' WHERE category = :categoryName")
+    suspend fun resetCategoryBooks(categoryName: String)
 }
 
 @Dao
@@ -105,4 +108,7 @@ interface CategoryDao {
 
     @Query("DELETE FROM categories WHERE id = :id")
     suspend fun delete(id: String)
+
+    @Query("DELETE FROM categories WHERE name = :name")
+    suspend fun deleteByName(name: String)
 }

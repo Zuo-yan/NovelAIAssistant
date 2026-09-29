@@ -90,6 +90,13 @@ class SettingsViewModel @Inject constructor(
 
     fun deleteProvider(id: String) = aiConfigRepository.deleteProvider(id)
 
+    /** 一键将指定提供商设为全局默认（同步应用到续写与伴读场景） */
+    fun setDefaultProvider(config: ApiProviderConfig) {
+        val model = config.selectedModel
+        aiConfigRepository.saveRoute(TaskScene.CONTINUATION, ModelRoute(config.id, model))
+        aiConfigRepository.saveRoute(TaskScene.COMPANION, ModelRoute(config.id, model))
+    }
+
     fun saveRoute(scene: TaskScene, providerId: String, model: String) {
         aiConfigRepository.saveRoute(scene, ModelRoute(providerId, model.trim()))
     }

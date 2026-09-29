@@ -31,7 +31,11 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.Surface
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -84,6 +88,7 @@ fun SettingsScreen(
         ) {
             providers.forEach { config ->
                 val ping = pingResults[config.id]
+                val isDefault = continuationRoute.providerId == config.id && companionRoute.providerId == config.id
                 SettingRow(
                     title = config.providerName,
                     subtitle = "${config.selectedModel.ifBlank { "未选模型" }} · ${config.baseUrl}",
@@ -91,6 +96,30 @@ fun SettingsScreen(
                     onClick = { onEditProvider(config.id) },
                     trailing = {
                         Row(verticalAlignment = Alignment.CenterVertically) {
+                            if (isDefault) {
+                                Surface(
+                                    shape = CircleShape,
+                                    color = MaterialTheme.colorScheme.primaryContainer,
+                                    modifier = Modifier.padding(end = 6.dp)
+                                ) {
+                                    Text(
+                                        "默认",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                    )
+                                }
+                            } else if (config.isEnabled) {
+                                TextButton(
+                                    onClick = {
+                                        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                        viewModel.setDefaultProvider(config)
+                                    },
+                                    contentPadding = PaddingValues(horizontal = 4.dp, vertical = 0.dp)
+                                ) {
+                                    Text("设为默认", style = MaterialTheme.typography.labelSmall)
+                                }
+                            }
                             when (ping) {
                                 is PingUiState.Testing -> CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
                                 is PingUiState.Ok -> {
@@ -258,8 +287,14 @@ private fun RouteEditDialog(
                     Text("请先在「模型与 API」中添加并启用提供商")
                 }
                 // 提供商选择
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                    providers.take(3).forEach { p ->
+                Text("选择服务商 / API Key", style = MaterialTheme.typography.labelMedium)
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState())
+                ) {
+                    providers.forEach { p ->
                         FilterChip(
                             selected = p.id == providerId,
                             onClick = {
@@ -267,19 +302,7 @@ private fun RouteEditDialog(
                                 onClearModels()
                                 model = p.selectedModel
                             },
-                            label = { Text(p.providerName.take(5)) }
-                        )
-                    }
-                    if (providers.size > 3) {
-                        FilterChip(
-                            selected = providerId !in providers.take(3).map { it.id },
-                            onClick = {
-                                val other = providers.first { it.id !in providers.take(3).map { x -> x.id } }
-                                providerId = other.id
-                                onClearModels()
-                                model = other.selectedModel
-                            },
-                            label = { Text(providers.first { it.id !in providers.take(3).map { x -> x.id } }.providerName.take(5)) }
+                            label = { Text(p.providerName) }
                         )
                     }
                 }

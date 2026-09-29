@@ -124,6 +124,7 @@ class AssistantViewModel @Inject constructor(
             return
         }
         val (provider, model) = active
+        val effectiveProvider = provider.copy(selectedModel = model)
 
         generateJob = viewModelScope.launch {
             _error.value = null
@@ -173,8 +174,8 @@ class AssistantViewModel @Inject constructor(
             var promptTokens = 0L
             var completionTokens = 0L
 
-            aiClientFactory.clientFor(provider.kind)
-                .streamChat(provider, messages, provider.maxTokens, provider.temperature)
+            aiClientFactory.clientFor(effectiveProvider.kind)
+                .streamChat(effectiveProvider, messages, effectiveProvider.maxTokens, effectiveProvider.temperature)
                 .collect { event ->
                     when (event) {
                         is StreamEvent.Delta -> {
