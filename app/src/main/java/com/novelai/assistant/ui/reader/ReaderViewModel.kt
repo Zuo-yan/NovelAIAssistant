@@ -28,6 +28,17 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
+enum class TtsTimerMode(val label: String, val minutes: Int) {
+    OFF("不设置（听到全书完）", 0),
+    END_OF_CHAPTER("听完本章停止", -1),
+    MIN_15("15 分钟", 15),
+    MIN_20("20 分钟", 20),
+    MIN_30("30 分钟", 30),
+    MIN_45("45 分钟", 45),
+    MIN_60("60 分钟", 60),
+    MIN_90("90 分钟", 90)
+}
+
 enum class TocFilter(val label: String) {
     ALL("全部"), ORIGINAL("仅原作"), AI("AI 衍生"), TREE("分支树")
 }
@@ -145,7 +156,7 @@ class ReaderViewModel @Inject constructor(
         scheduleProgressSave()
     }
 
-    // ---- 听书（TTS） ----
+    // ---- 听书（TTS）与定时器 ----
     val ttsReady = ttsPlayer.ready
     val ttsSpeaking = ttsPlayer.speaking
     val ttsPaused = ttsPlayer.paused
@@ -153,6 +164,15 @@ class ReaderViewModel @Inject constructor(
 
     private val _ttsSpeed = MutableStateFlow(1.0f)
     val ttsSpeed: StateFlow<Float> = _ttsSpeed.asStateFlow()
+
+    // 听书定时器
+    private val _ttsTimerMode = MutableStateFlow(TtsTimerMode.OFF)
+    val ttsTimerMode: StateFlow<TtsTimerMode> = _ttsTimerMode.asStateFlow()
+
+    private val _ttsTimerRemainingSeconds = MutableStateFlow<Int?>(null)
+    val ttsTimerRemainingSeconds: StateFlow<Int?> = _ttsTimerRemainingSeconds.asStateFlow()
+
+    private var ttsTimerJob: Job? = null
 
     init {
         // 加载持久化的语速
@@ -170,6 +190,27 @@ class ReaderViewModel @Inject constructor(
         launchPref { readingPreferencesRepository.setTtsSpeed(clamped) }
     }
 
+    fun setTtsTimerMode(mode: TtsTimerMode) {
+        ttsTimerJob?.cancel()
+        _ttsTimerMode.value = mode
+        if (mode.minutes > 0) {
+            val totalSeconds = mode.minutes * 60
+            _ttsTimerRemainingSeconds.value = totalSeconds
+            ttsTimerJob = viewModelScope.launch {
+                var remaining = totalSeconds
+                while (remaining > 0) {
+                    delay(1000)
+                    remaining -= 1
+                    _ttsTimerRemainingSeconds.value = remaining
+                }
+                // 倒计时结束，停止朗读并重置定时状态
+                stopTts(resetTimer = true)
+            }
+        } else {
+            _ttsTimerRemainingSeconds.value = null
+        }
+    }
+
     /** 开始/停止朗读当前章；支持指定起始段落，读毕自动连播下一章 */
     fun toggleTts(startIndex: Int = 0) {
         if (ttsPlayer.speaking.value || ttsPlayer.paused.value) {
@@ -180,31 +221,60 @@ class ReaderViewModel @Inject constructor(
     }
 
     fun startTts(startIndex: Int = 0) {
-        val chapter = currentChapter.value ?: return
+        val chapter = currentChapter.value ?: chapters.value.getOrNull(_chapterIndex.value) ?: return
+        startTtsForChapter(chapter, startIndex)
+    }
+
+    fun startTtsForChapter(chapter: ChapterEntity, startIndex: Int = 0) {
         val paragraphs = Paginator.splitParagraphs(chapter.content)
-        val validIndex = startIndex.coerceIn(0, (paragraphs.size - 1).coerceAtLeast(0))
+        if (paragraphs.isEmpty()) {
+            onTtsChapterEnd()
+            return
+        }
+        val validIndex = startIndex.coerceIn(0, paragraphs.lastIndex)
         ttsPlayer.play(paragraphs, startIndex = validIndex) { onTtsChapterEnd() }
     }
 
     fun pauseTts() = ttsPlayer.pause()
     fun resumeTts() = ttsPlayer.resume()
-    fun stopTts() {
+
+    fun stopTts(resetTimer: Boolean = false) {
         if (ttsPlayer.speaking.value || ttsPlayer.paused.value) ttsPlayer.stop()
+        if (resetTimer) {
+            ttsTimerJob?.cancel()
+            _ttsTimerMode.value = TtsTimerMode.OFF
+            _ttsTimerRemainingSeconds.value = null
+        }
     }
 
     private fun onTtsChapterEnd() {
+        // 1. 若当前设置了“听完本章停止”，则停止朗读并重置定时模式
+        if (_ttsTimerMode.value == TtsTimerMode.END_OF_CHAPTER) {
+            stopTts(resetTimer = true)
+            return
+        }
+
+        // 2. 连播下一章：直接获取下一章实体并播放，绝不依赖异步 currentChapter 刷新
         val next = _chapterIndex.value + 1
-        if (next <= chapters.value.lastIndex) {
+        val list = chapters.value
+        if (next in list.indices) {
+            val nextChapter = list[next]
+            _targetPageOnChapterLoad.value = 0
             _chapterIndex.value = next
             scheduleProgressSave()
             viewModelScope.launch {
-                kotlinx.coroutines.delay(400) // 等 chapters/currentChapter 刷新
-                startTts(0)
+                // 微延迟确保 UI 分页引擎就绪
+                delay(150)
+                startTtsForChapter(nextChapter, 0)
             }
+        } else {
+            // 已播放到全书最后一章，自动停止
+            stopTts(resetTimer = true)
         }
     }
 
     override fun onCleared() {
+        ttsTimerJob?.cancel()
         ttsPlayer.stop()
         // 兜底保存
         val idx = _chapterIndex.value

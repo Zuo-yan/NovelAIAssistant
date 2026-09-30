@@ -67,6 +67,10 @@ import androidx.compose.material.icons.rounded.Pause
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Stop
 import androidx.compose.material.icons.rounded.Tune
+import androidx.compose.material.icons.rounded.Timer
+import androidx.compose.material.icons.rounded.HourglassBottom
+import androidx.compose.material.icons.rounded.Check
+import java.util.Locale
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -152,6 +156,9 @@ fun ReaderScreen(
     val ttsReady by viewModel.ttsReady.collectAsStateWithLifecycle()
     val ttsPosition by viewModel.ttsPosition.collectAsStateWithLifecycle()
     val ttsSpeed by viewModel.ttsSpeed.collectAsStateWithLifecycle()
+    val ttsTimerMode by viewModel.ttsTimerMode.collectAsStateWithLifecycle()
+    val ttsTimerRemainingSeconds by viewModel.ttsTimerRemainingSeconds.collectAsStateWithLifecycle()
+    var timerSheetOpen by remember { mutableStateOf(false) }
 
     val palette = ReaderPalettes.of(settings.bgTheme.name)
     val bgColor = Color(palette.background)
@@ -214,11 +221,12 @@ fun ReaderScreen(
         ActivityResultContracts.CreateDocument("text/plain")
     ) { uri -> viewModel.exportChapter(uri, exportMarkdown) }
 
-    BackHandler(enabled = tocOpen || settingsOpen || quotedText != null || actionChapter != null || renameChapterTarget != null || confirmDeleteChapter != null) {
+    BackHandler(enabled = tocOpen || settingsOpen || timerSheetOpen || quotedText != null || actionChapter != null || renameChapterTarget != null || confirmDeleteChapter != null) {
         when {
             actionChapter != null -> actionChapter = null
             renameChapterTarget != null -> renameChapterTarget = null
             confirmDeleteChapter != null -> confirmDeleteChapter = null
+            timerSheetOpen -> timerSheetOpen = false
             tocOpen -> viewModel.closeToc()
             settingsOpen -> viewModel.closeSettings()
             quotedText != null -> viewModel.clearQuote()
@@ -422,6 +430,37 @@ fun ReaderScreen(
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
                         )
+                        // 定时状态与设置按钮
+                        val timerActive = ttsTimerMode != com.novelai.assistant.ui.reader.TtsTimerMode.OFF
+                        Surface(
+                            shape = CircleShape,
+                            color = if (timerActive) accent.copy(alpha = 0.22f) else onChromeColor.copy(alpha = 0.08f),
+                            border = if (timerActive) androidx.compose.foundation.BorderStroke(1.dp, accent.copy(alpha = 0.6f)) else null,
+                            modifier = Modifier.clickable { timerSheetOpen = true }
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp),
+                                horizontalArrangement = Arrangement.spacedBy(3.dp)
+                            ) {
+                                Icon(
+                                    Icons.Rounded.Timer,
+                                    contentDescription = "定时",
+                                    tint = if (timerActive) accent else onChromeColor,
+                                    modifier = Modifier.size(15.dp)
+                                )
+                                val timerLabel = when {
+                                    ttsTimerRemainingSeconds != null -> formatRemaining(ttsTimerRemainingSeconds)
+                                    ttsTimerMode == com.novelai.assistant.ui.reader.TtsTimerMode.END_OF_CHAPTER -> "本章停"
+                                    else -> "定时"
+                                }
+                                Text(
+                                    timerLabel,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = if (timerActive) accent else onChromeColor
+                                )
+                            }
+                        }
                         IconButton(onClick = {
                             if (ttsPaused) viewModel.resumeTts() else viewModel.pauseTts()
                         }) {
@@ -883,9 +922,28 @@ fun ReaderScreen(
                         viewModel = viewModel,
                         brightness = brightness,
                         isDark = isEffectiveDark,
+                        timerMode = ttsTimerMode,
+                        timerRemainingSeconds = ttsTimerRemainingSeconds,
+                        onOpenTimer = {
+                            viewModel.closeSettings()
+                            timerSheetOpen = true
+                        },
                         onBrightnessChange = { brightness = it }
                     )
                 }
+            }
+        }
+
+        // ---------- 听书定时面板 ----------
+        if (timerSheetOpen) {
+            NovelAITheme(darkTheme = isEffectiveDark) {
+                TtsTimerSheet(
+                    currentMode = ttsTimerMode,
+                    remainingSeconds = ttsTimerRemainingSeconds,
+                    isDark = isEffectiveDark,
+                    onSelectMode = { viewModel.setTtsTimerMode(it) },
+                    onDismiss = { timerSheetOpen = false }
+                )
             }
         }
     }
@@ -1315,6 +1373,9 @@ private fun ReaderSettingsSheet(
     viewModel: ReaderViewModel,
     brightness: Float,
     isDark: Boolean,
+    timerMode: TtsTimerMode,
+    timerRemainingSeconds: Int?,
+    onOpenTimer: () -> Unit,
     onBrightnessChange: (Float) -> Unit
 ) {
     val sliderColors = SliderDefaults.colors(
@@ -1478,6 +1539,192 @@ private fun ReaderSettingsSheet(
                     inactiveBorderColor = if (isDark) Color(0xFF383846) else MaterialTheme.colorScheme.outline
                 )
             ) { Text("左右翻页") }
+        }
+
+        // 听书定时
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(MaterialTheme.shapes.medium)
+                .clickable { onOpenTimer() }
+                .padding(vertical = 4.dp)
+        ) {
+            Icon(Icons.Rounded.Timer, contentDescription = null, tint = labelColor, modifier = Modifier.size(18.dp))
+            Spacer(Modifier.width(10.dp))
+            Text("听书定时", style = MaterialTheme.typography.bodyLarge, color = labelColor, modifier = Modifier.weight(1f))
+            Text(
+                when {
+                    timerRemainingSeconds != null -> "倒计时 ${formatRemaining(timerRemainingSeconds)}"
+                    timerMode == TtsTimerMode.END_OF_CHAPTER -> "听完本章停止"
+                    else -> timerMode.label
+                },
+                style = MaterialTheme.typography.bodyMedium,
+                color = if (timerMode != TtsTimerMode.OFF) (if (isDark) NovelColors.IndigoLight else MaterialTheme.colorScheme.primary)
+                else (if (isDark) Color(0xFFA0A0AC) else MaterialTheme.colorScheme.onSurfaceVariant)
+            )
+            Spacer(Modifier.width(4.dp))
+            Icon(
+                Icons.Rounded.KeyboardArrowRight,
+                contentDescription = null,
+                tint = if (isDark) Color(0xFFA0A0AC) else MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.size(18.dp)
+            )
+        }
+    }
+}
+
+
+private fun formatRemaining(seconds: Int?): String {
+    if (seconds == null || seconds <= 0) return ""
+    val m = seconds / 60
+    val s = seconds % 60
+    return String.format(Locale.getDefault(), "%02d:%02d", m, s)
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun TtsTimerSheet(
+    currentMode: TtsTimerMode,
+    remainingSeconds: Int?,
+    isDark: Boolean,
+    onSelectMode: (TtsTimerMode) -> Unit,
+    onDismiss: () -> Unit
+) {
+    val labelColor = if (isDark) Color(0xFFE8E8EE) else MaterialTheme.colorScheme.onSurface
+    val accent = if (isDark) NovelColors.IndigoLight else MaterialTheme.colorScheme.primary
+
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        containerColor = if (isDark) Color(0xFF181820) else MaterialTheme.colorScheme.surfaceContainerLow,
+        contentColor = labelColor,
+        dragHandle = {
+            BottomSheetDefaults.DragHandle(
+                color = if (isDark) Color(0xFF5A5A66) else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
+            )
+        }
+    ) {
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 20.dp)
+                .padding(bottom = 36.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.padding(bottom = 4.dp)
+            ) {
+                Icon(
+                    Icons.Rounded.Timer,
+                    contentDescription = null,
+                    tint = accent,
+                    modifier = Modifier.size(22.dp)
+                )
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    "听书定时停止",
+                    style = MaterialTheme.typography.titleLarge,
+                    color = labelColor
+                )
+            }
+
+            if (remainingSeconds != null && remainingSeconds > 0) {
+                Surface(
+                    shape = MaterialTheme.shapes.medium,
+                    color = accent.copy(alpha = 0.12f),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Icon(
+                            Icons.Rounded.HourglassBottom,
+                            contentDescription = null,
+                            tint = accent,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Text(
+                            "倒计时中：将在 ${formatRemaining(remainingSeconds)} 后停止朗读",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = accent
+                        )
+                    }
+                }
+            } else if (currentMode == TtsTimerMode.END_OF_CHAPTER) {
+                Surface(
+                    shape = MaterialTheme.shapes.medium,
+                    color = accent.copy(alpha = 0.12f),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Icon(
+                            Icons.Rounded.HourglassBottom,
+                            contentDescription = null,
+                            tint = accent,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Text(
+                            "本章读完后将自动停止朗读，不再连播下一章",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = accent
+                        )
+                    }
+                }
+            }
+
+            Text(
+                "定时选项",
+                style = MaterialTheme.typography.labelMedium,
+                color = if (isDark) Color(0xFFA0A0AC) else MaterialTheme.colorScheme.onSurfaceVariant
+            )
+
+            TtsTimerMode.entries.forEach { mode ->
+                val isSelected = mode == currentMode
+                Surface(
+                    shape = MaterialTheme.shapes.medium,
+                    color = if (isSelected) {
+                        if (isDark) Color(0xFF2B2B38) else MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.4f)
+                    } else {
+                        if (isDark) Color(0xFF22222C) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f)
+                    },
+                    border = if (isSelected) {
+                        androidx.compose.foundation.BorderStroke(1.dp, accent.copy(alpha = 0.8f))
+                    } else null,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable {
+                            onSelectMode(mode)
+                            onDismiss()
+                        }
+                ) {
+                    Row(
+                        Modifier.padding(horizontal = 16.dp, vertical = 13.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            mode.label,
+                            style = MaterialTheme.typography.bodyLarge,
+                            color = if (isSelected) accent else labelColor,
+                            modifier = Modifier.weight(1f)
+                        )
+                        if (isSelected) {
+                            Icon(
+                                Icons.Rounded.Check,
+                                contentDescription = "已选",
+                                tint = accent,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+                    }
+                }
+            }
         }
     }
 }

@@ -6,7 +6,7 @@
   <img src="https://img.shields.io/badge/UI-Jetpack%20Compose%20%2B%20Material%203-blue.svg?style=flat-square" alt="UI" />
   <img src="https://img.shields.io/badge/Architecture-MVVM%20%2B%20Clean%20Architecture-orange.svg?style=flat-square" alt="Architecture" />
   <img src="https://img.shields.io/badge/BYOK-Privacy%20First-red.svg?style=flat-square" alt="BYOK" />
-  <img src="https://img.shields.io/badge/Latest%20Version-v0.8.0-success.svg?style=flat-square" alt="Version" />
+  <img src="https://img.shields.io/badge/Latest%20Version-v0.9.0-success.svg?style=flat-square" alt="Version" />
 </p>
 
 ---
