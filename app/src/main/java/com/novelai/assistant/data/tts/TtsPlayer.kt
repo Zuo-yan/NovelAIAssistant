@@ -50,6 +50,13 @@ class TtsPlayer @Inject constructor(
         tts = TextToSpeech(context) { status ->
             initOk = status == TextToSpeech.SUCCESS
             if (initOk) {
+                // 设置音频流属性为 USAGE_MEDIA，支持锁屏与后台持续发声
+                val audioAttrs = android.media.AudioAttributes.Builder()
+                    .setContentType(android.media.AudioAttributes.CONTENT_TYPE_SPEECH)
+                    .setUsage(android.media.AudioAttributes.USAGE_MEDIA)
+                    .build()
+                tts?.setAudioAttributes(audioAttrs)
+
                 // 中文优先，失败则退回系统默认语言
                 val result = tts?.setLanguage(Locale.SIMPLIFIED_CHINESE)
                 if (result == TextToSpeech.LANG_MISSING_DATA || result == TextToSpeech.LANG_NOT_SUPPORTED) {

@@ -13,6 +13,8 @@ import com.novelai.assistant.data.prefs.ReaderBgTheme
 import com.novelai.assistant.data.prefs.ReadingPreferencesRepository
 import com.novelai.assistant.data.prefs.ReadingSettings
 import com.novelai.assistant.data.repository.BookRepository
+import com.novelai.assistant.data.tts.TtsMediaManager
+import com.novelai.assistant.data.tts.TtsMediaActionListener
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Job
@@ -121,6 +123,37 @@ class ReaderViewModel @Inject constructor(
                 _chapterIndex.value = b.currentReadingChapterIndex
             }
         }.launchIn(viewModelScope)
+
+        // 注册系统媒体卡片/通知栏动作回调
+        TtsMediaManager.setActionListener(object : TtsMediaActionListener {
+            override fun onPlay() { resumeTts() }
+            override fun onPause() { pauseTts() }
+            override fun onSkipToNext() {
+                val next = _chapterIndex.value + 1
+                val list = chapters.value
+                if (next in list.indices) {
+                    val nextChapter = list[next]
+                    _targetPageOnChapterLoad.value = 0
+                    _chapterIndex.value = next
+                    scheduleProgressSave()
+                    startTtsForChapter(nextChapter, 0)
+                }
+            }
+            override fun onSkipToPrevious() {
+                val prev = _chapterIndex.value - 1
+                val list = chapters.value
+                if (prev in list.indices) {
+                    val prevChapter = list[prev]
+                    _targetPageOnChapterLoad.value = 0
+                    _chapterIndex.value = prev
+                    scheduleProgressSave()
+                    startTtsForChapter(prevChapter, 0)
+                }
+            }
+            override fun onStop() {
+                stopTts(resetTimer = true)
+            }
+        })
     }
 
     private val _targetPageOnChapterLoad = MutableStateFlow<Int?>(null)
@@ -233,10 +266,18 @@ class ReaderViewModel @Inject constructor(
         }
         val validIndex = startIndex.coerceIn(0, paragraphs.lastIndex)
         ttsPlayer.play(paragraphs, startIndex = validIndex) { onTtsChapterEnd() }
+        syncMediaNotification(chapter, isPlaying = true, isPaused = false)
     }
 
-    fun pauseTts() = ttsPlayer.pause()
-    fun resumeTts() = ttsPlayer.resume()
+    fun pauseTts() {
+        ttsPlayer.pause()
+        currentChapter.value?.let { syncMediaNotification(it, isPlaying = true, isPaused = true) }
+    }
+
+    fun resumeTts() {
+        ttsPlayer.resume()
+        currentChapter.value?.let { syncMediaNotification(it, isPlaying = true, isPaused = false) }
+    }
 
     fun stopTts(resetTimer: Boolean = false) {
         if (ttsPlayer.speaking.value || ttsPlayer.paused.value) ttsPlayer.stop()
@@ -245,6 +286,21 @@ class ReaderViewModel @Inject constructor(
             _ttsTimerMode.value = TtsTimerMode.OFF
             _ttsTimerRemainingSeconds.value = null
         }
+        TtsMediaManager.stopService(context)
+    }
+
+    private fun syncMediaNotification(chapter: ChapterEntity, isPlaying: Boolean, isPaused: Boolean) {
+        val bTitle = book.value?.title ?: "小说阅读"
+        TtsMediaManager.startOrUpdateService(
+            context = context,
+            bookId = bookId,
+            bookTitle = bTitle,
+            chapterTitle = chapter.title,
+            chapterIndex = chapter.chapterIndex,
+            totalChapters = chapters.value.size,
+            isPlaying = isPlaying,
+            isPaused = isPaused
+        )
     }
 
     private fun onTtsChapterEnd() {
@@ -276,6 +332,8 @@ class ReaderViewModel @Inject constructor(
     override fun onCleared() {
         ttsTimerJob?.cancel()
         ttsPlayer.stop()
+        TtsMediaManager.setActionListener(null)
+        TtsMediaManager.stopService(context)
         // 兜底保存
         val idx = _chapterIndex.value
         if (idx >= 0) {

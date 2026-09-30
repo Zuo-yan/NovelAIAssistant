@@ -180,10 +180,7 @@ fun ReaderScreen(
     // 阅读亮度（1.0 = 跟随系统）
     var brightness by remember { mutableStateOf(1f) }
     val view = androidx.compose.ui.platform.LocalView.current
-    // 离开阅读页时停止朗读
-    DisposableEffect(Unit) {
-        onDispose { viewModel.stopTts() }
-    }
+    // 后台支持持续听书，由前台服务与通知栏控制，不随页面销毁强制中断
     DisposableEffect(brightness) {
         val window = (view.context as? Activity)?.window
         val old = window?.attributes?.screenBrightness
@@ -214,6 +211,23 @@ fun ReaderScreen(
         if (controller != null) controller.isAppearanceLightStatusBars = !isDarkReader
         onDispose {
             if (controller != null && original != null) controller.isAppearanceLightStatusBars = original
+        }
+    }
+
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val notificationPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { /* 通知权限授权结果 */ }
+
+    fun checkNotificationPermission() {
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+            val granted = androidx.core.content.ContextCompat.checkSelfPermission(
+                context,
+                android.Manifest.permission.POST_NOTIFICATIONS
+            ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+            if (!granted) {
+                notificationPermissionLauncher.launch(android.Manifest.permission.POST_NOTIFICATIONS)
+            }
         }
     }
 
@@ -528,6 +542,7 @@ fun ReaderScreen(
                     ) {
                         if (ttsReady) {
                             haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            checkNotificationPermission()
                             viewModel.toggleTts(currentVisibleParaIndex)
                         }
                     }
@@ -599,6 +614,7 @@ fun ReaderScreen(
                     horizontalArrangement = Arrangement.spacedBy(5.dp)
                 ) {
                     QuoteChip("从此处朗读", Icons.Rounded.PlayArrow, accent) {
+                        checkNotificationPermission()
                         viewModel.playFromQuotedParagraph()
                     }
                     QuoteChip("解析深意", Icons.Rounded.AutoAwesome, MaterialTheme.colorScheme.primary) {

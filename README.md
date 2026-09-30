@@ -6,7 +6,7 @@
   <img src="https://img.shields.io/badge/UI-Jetpack%20Compose%20%2B%20Material%203-blue.svg?style=flat-square" alt="UI" />
   <img src="https://img.shields.io/badge/Architecture-MVVM%20%2B%20Clean%20Architecture-orange.svg?style=flat-square" alt="Architecture" />
   <img src="https://img.shields.io/badge/BYOK-Privacy%20First-red.svg?style=flat-square" alt="BYOK" />
-  <img src="https://img.shields.io/badge/Latest%20Version-v0.9.0-success.svg?style=flat-square" alt="Version" />
+  <img src="https://img.shields.io/badge/Latest%20Version-v0.10.0-success.svg?style=flat-square" alt="Version" />
 </p>
 
 ---
@@ -35,13 +35,21 @@
   - 支持 **[全部] / [仅原作] / [AI衍生] / [分支树]** 四维目录筛选；
   - 目录内**长按任意章节**呼出操作菜单，支持章节**重命名**与**安全永久删除**。
 
-### 2. 🎧 智能语音听书 (TTS Companion)
-- **开箱即用**：原生 Android TTS 语音合成驱动，零延迟即点即播。
-- **智能选段与断点续播**：
+### 2. 🎧 智能语音听书与系统媒体控制 (TTS & Media Controls)
+- **系统级媒体卡片组件 (System Media Controls)**：
+  - 接入 Android 原生 **MediaSession** 与 **MediaStyle** 前台媒体服务（`foregroundServiceType="mediaPlayback"`）；
+  - 系统下拉通知中心、锁屏大号胶囊及各类定制系统（MIUI/HyperOS、ColorOS、OriginOS、OneUI）原生展示精美媒体播放器卡片；
+  - **后台与息屏保活**：切出应用、灭屏锁屏时像听音乐一样稳定持续播放，支持通知栏与蓝牙耳机直接进行**播放/暂停、上一章、下一章、停止**；
+  - 点击通知栏卡片一键平滑跳转并恢复当前书籍阅读器。
+- **听书定时停止 (Sleep Timer)**：
+  - 支持 **15 / 20 / 30 / 45 / 60 / 90 分钟** 倒计时自动停止；
+  - 支持睡前专属**「听完本章停止」**模式；
+  - 支持**「不设置（听到全书完）」**，持续自动跨章连播直至全书终章。
+- **智能选段与段落高亮跟随**：
   - 支持类似番茄小说的**从当前屏幕所在页首段直接起播**；
   - 正文长按任意文字片段呼出浮层，支持**「从此处朗读」**；
-  - 听书朗读期间对应段落实时以**柔和紫色微光高亮**跟随，自动翻页连播。
-- **听书控制胶囊**：底部常驻播放/暂停切换、停止按钮与 **0.75x ~ 2.0x 无级语速调节**。
+  - 听书朗读期间对应段落实时以**柔和紫色微光高亮**跟随，自动驱动仿真翻页连播。
+- **听书控制胶囊**：底部常驻播放/暂停切换、停止按钮、**实时倒计时胶囊**与 **0.75x ~ 2.0x 无级语速调节**。
 
 ### 3. 🤖 AI 深度伴读与划线即问 (RAG & Chat)
 - **划线即问浮动胶囊**：阅读过程中长按任意文字片段，即时呼出操作胶囊：
