@@ -45,6 +45,12 @@ class AssistantViewModel @Inject constructor(
     private val selectedBookId = MutableStateFlow("")
     val currentBookId: StateFlow<String> = selectedBookId.asStateFlow()
 
+    private val _currentBook = MutableStateFlow<BookEntity?>(null)
+    val currentBook: StateFlow<BookEntity?> = _currentBook.asStateFlow()
+
+    private val _currentChapter = MutableStateFlow<ChapterEntity?>(null)
+    val currentChapter: StateFlow<ChapterEntity?> = _currentChapter.asStateFlow()
+
     val chatRecords: StateFlow<List<AiChatRecordEntity>> = selectedBookId
         .flatMapLatest { bookId ->
             if (bookId.isBlank()) flowOf(emptyList()) else chatRepository.observeChat(bookId)
@@ -73,21 +79,21 @@ class AssistantViewModel @Inject constructor(
 
     fun toggleSpoilerFree() { _spoilerFree.value = !_spoilerFree.value }
 
-    private var currentBook: BookEntity? = null
-    private var currentChapter: ChapterEntity? = null
     private var generateJob: Job? = null
+    private var initializedQuoteKey: String? = null
 
     fun selectBook(bookId: String) {
-        if (bookId == selectedBookId.value || bookId.isBlank()) return
+        if (bookId.isBlank()) return
+        if (bookId == selectedBookId.value && _currentBook.value != null) return
         selectedBookId.value = bookId
         generateJob?.cancel()
         _generating.value = false
         _streamingText.value = ""
         viewModelScope.launch {
             val book = bookRepository.getBook(bookId) ?: return@launch
-            currentBook = book
+            _currentBook.value = book
             val chapters = bookRepository.getChapters(bookId)
-            currentChapter = chapters.getOrNull(book.currentReadingChapterIndex.coerceIn(0, chapters.lastIndex))
+            _currentChapter.value = chapters.getOrNull(book.currentReadingChapterIndex.coerceIn(0, chapters.lastIndex))
         }
     }
 
@@ -96,6 +102,35 @@ class AssistantViewModel @Inject constructor(
     }
 
     fun clearQuote() { _pendingQuote.value = null }
+
+    /**
+     * 阅读器划选进入专属伴读页时的初始化方法。
+     * 若携带有特定 action（如 AI吐槽、解析深意、情绪总结），自动且仅自动触发一次问答请求。
+     */
+    fun initializeForQuote(bookId: String, quote: String, action: String) {
+        selectBook(bookId)
+        if (quote.isNotBlank()) {
+            setPendingQuote(quote)
+        }
+        val key = "$bookId:$quote:$action"
+        if (initializedQuoteKey == key) return
+        initializedQuoteKey = key
+
+        if (action.isNotBlank()) {
+            sendAction(action, quote.takeIf { it.isNotBlank() })
+        }
+    }
+
+    fun sendAction(action: String, quoteText: String? = null) {
+        val q = quoteText ?: _pendingQuote.value
+        val prompt = when (action) {
+            "AI吐槽", "吐槽" -> PromptBuilder.QUICK_ROAST
+            "解析深意", "解析" -> PromptBuilder.QUICK_ANALYZE
+            "情绪总结", "情绪" -> PromptBuilder.QUICK_EMOTION
+            else -> action
+        }
+        send(prompt, customQuote = q)
+    }
 
     fun stopGenerating() {
         generateJob?.cancel()
@@ -109,12 +144,10 @@ class AssistantViewModel @Inject constructor(
         viewModelScope.launch { chatRepository.clear(bookId) }
     }
 
-    fun send(question: String) {
+    fun send(question: String, customQuote: String? = null) {
         val bookId = selectedBookId.value
         if (bookId.isBlank()) { _error.value = "请先选择一本书"; return }
-        val book = currentBook
-        if (book == null) { _error.value = "书籍加载中，请稍候"; return }
-        val quote = _pendingQuote.value
+        val quote = customQuote ?: _pendingQuote.value
         val trimmed = question.trim()
         if (trimmed.isBlank() && quote.isNullOrBlank()) return
 
@@ -132,6 +165,20 @@ class AssistantViewModel @Inject constructor(
             _streamingText.value = ""
             _pendingQuote.value = null
 
+            val book = _currentBook.value ?: bookRepository.getBook(bookId)
+            if (book == null) {
+                _error.value = "无法加载书籍信息，请稍候重试"
+                _generating.value = false
+                return@launch
+            }
+            _currentBook.value = book
+
+            if (_currentChapter.value == null) {
+                val chapters = bookRepository.getChapters(bookId)
+                _currentChapter.value = chapters.getOrNull(book.currentReadingChapterIndex.coerceIn(0, chapters.lastIndex))
+            }
+            val chapter = _currentChapter.value
+
             val history = chatRepository.recentMessages(bookId, 12)
                 .filter { it.role == "user" || it.role == "assistant" }
                 .map { ChatMessage(it.role, it.content) }
@@ -144,25 +191,31 @@ class AssistantViewModel @Inject constructor(
                     query = query,
                     topK = 3,
                     spoilerFree = _spoilerFree.value,
-                    currentChapterIndex = currentChapter?.chapterIndex
+                    currentChapterIndex = chapter?.chapterIndex
                 )
             }.getOrDefault(emptyList())
             _retrievedHint.value = retrieved.takeIf { it.isNotEmpty() }
                 ?.joinToString("、") { it.chapter.title }
 
+            val userContentToSave = if (quote.isNullOrBlank()) {
+                trimmed
+            } else {
+                "【划线选段】\n$quote\n\n【提问】\n$trimmed"
+            }
+
             chatRepository.save(
                 AiChatRecordEntity(
                     id = UUID.randomUUID().toString(),
                     bookId = bookId,
-                    chapterId = currentChapter?.id,
+                    chapterId = chapter?.id,
                     role = "user",
-                    content = if (quote.isNullOrBlank()) trimmed else "【划线】$quote\n\n$trimmed"
+                    content = userContentToSave
                 )
             )
 
             val messages = PromptBuilder.companionMessages(
                 book = book,
-                currentChapter = currentChapter,
+                currentChapter = chapter,
                 history = history,
                 question = trimmed.ifBlank { "请解析上面的划线选段" },
                 quotedText = quote,
@@ -199,7 +252,7 @@ class AssistantViewModel @Inject constructor(
                     AiChatRecordEntity(
                         id = UUID.randomUUID().toString(),
                         bookId = bookId,
-                        chapterId = currentChapter?.id,
+                        chapterId = chapter?.id,
                         role = "assistant",
                         content = full,
                         modelUsed = model

@@ -9,7 +9,6 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.WindowInsets
@@ -38,6 +37,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.unit.dp
+import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.NavHostController
@@ -47,8 +47,8 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
-import androidx.hilt.navigation.compose.hiltViewModel
 import com.novelai.assistant.ui.assistant.AssistantScreen
+import com.novelai.assistant.ui.assistant.ReaderCompanionScreen
 import com.novelai.assistant.ui.bookshelf.BookshelfScreen
 import com.novelai.assistant.ui.components.glassEffect
 import com.novelai.assistant.ui.components.glassSource
@@ -64,23 +64,26 @@ object Routes {
     const val ONBOARDING = "onboarding"
     const val BOOKSHELF = "bookshelf"
     const val DISCOVER = "discover"
-    const val ASSISTANT = "assistant?bookId={bookId}&quote={quote}"
+    const val ASSISTANT = "assistant"
     const val SETTINGS = "settings"
     const val READER = "reader/{bookId}?chapter={chapter}"
     const val GENERATE = "generate/{bookId}/{chapterId}?mode={mode}"
     const val TREE = "tree/{bookId}"
     const val PROVIDER_EDIT = "provider_edit/{providerId}"
+    const val READER_COMPANION = "reader_companion/{bookId}?quote={quote}&action={action}"
 
-    fun assistant(bookId: String?, quote: String?): String {
-        val q = android.net.Uri.encode(quote ?: "")
-        return "assistant?bookId=${bookId ?: ""}&quote=$q"
-    }
+    fun assistant() = "assistant"
     fun reader(bookId: String) = "reader/$bookId"
     fun readerAt(bookId: String, chapterIndex: Int) = "reader/$bookId?chapter=$chapterIndex"
     fun generate(bookId: String, chapterId: String, mode: String) =
         "generate/$bookId/$chapterId?mode=$mode"
     fun tree(bookId: String) = "tree/$bookId"
     fun providerEdit(providerId: String) = "provider_edit/$providerId"
+    fun readerCompanion(bookId: String, quote: String, action: String = ""): String {
+        val q = android.net.Uri.encode(quote)
+        val a = android.net.Uri.encode(action)
+        return "reader_companion/$bookId?quote=$q&action=$a"
+    }
 }
 
 enum class TopLevelDestination(
@@ -96,9 +99,9 @@ enum class TopLevelDestination(
 
 private val topLevelRoutes = TopLevelDestination.entries.map { it.route }.toSet()
 
-// assistant 带查询参数，destination.route 是完整模式，需前缀匹配
+// 仅一级 Tab 页面显示底部导航栏，阅读器及下钻伴读页面不显示
 private fun isTopLevelRoute(route: String?): Boolean =
-    route != null && (route in topLevelRoutes || route.startsWith("assistant?"))
+    route != null && route in topLevelRoutes
 
 @Composable
 fun NovelApp() {
@@ -168,17 +171,8 @@ fun NovelApp() {
             composable(Routes.DISCOVER) {
                 DiscoverScreen()
             }
-            composable(
-                Routes.ASSISTANT,
-                arguments = listOf(
-                    navArgument("bookId") { type = NavType.StringType; defaultValue = "" },
-                    navArgument("quote") { type = NavType.StringType; defaultValue = "" }
-                )
-            ) { entry ->
-                AssistantScreen(
-                    bookIdArg = entry.arguments?.getString("bookId").orEmpty(),
-                    quoteArg = entry.arguments?.getString("quote").orEmpty()
-                )
+            composable(Routes.ASSISTANT) {
+                AssistantScreen()
             }
             composable(Routes.SETTINGS) {
                 SettingsScreen(
@@ -199,7 +193,24 @@ fun NovelApp() {
                         navController.navigate(Routes.generate(bookId, chapterId, mode))
                     },
                     onOpenTree = { navController.navigate(Routes.tree(it)) },
-                    onAsk = { bookId, quote -> navController.navigate(Routes.assistant(bookId, quote)) }
+                    onAsk = { bookId, quote, action ->
+                        navController.navigate(Routes.readerCompanion(bookId, quote, action))
+                    }
+                )
+            }
+            composable(
+                Routes.READER_COMPANION,
+                arguments = listOf(
+                    navArgument("bookId") { type = NavType.StringType },
+                    navArgument("quote") { type = NavType.StringType; defaultValue = "" },
+                    navArgument("action") { type = NavType.StringType; defaultValue = "" }
+                )
+            ) { entry ->
+                ReaderCompanionScreen(
+                    bookId = entry.arguments?.getString("bookId").orEmpty(),
+                    quote = entry.arguments?.getString("quote").orEmpty(),
+                    action = entry.arguments?.getString("action").orEmpty(),
+                    onBack = { navController.popBackStack() }
                 )
             }
             composable(

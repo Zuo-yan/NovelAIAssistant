@@ -1,26 +1,55 @@
 package com.novelai.assistant.data.tts
 
 import android.content.Context
+import android.os.Handler
+import android.os.Looper
+import android.os.PowerManager
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
+import com.novelai.assistant.data.db.ChapterEntity
+import com.novelai.assistant.data.repository.BookRepository
 import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
 import java.util.Locale
+import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
 import javax.inject.Singleton
 
 /**
- * 听书播放器：封装 Android 系统 TTS 引擎。
- * 按段落队列朗读，读毕回调供上层自动连播下一章。
+ * 听书段落块实体：
+ * 支持长段拆分，维护准确的段落原序号与最后块标记
+ */
+data class TtsQueueItem(
+    val paraIndex: Int,
+    val chunkIndex: Int,
+    val text: String,
+    val isLastChunkOfChapter: Boolean,
+    val utteranceId: String
+)
+
+/**
+ * 听书播放器核心引擎：
+ * 1. 采用双重缓冲预加载（Lookahead / QUEUE_ADD）流水线，消除段落间音频硬件静音空白，杜绝熄屏 Doze 切断；
+ * 2. 深度接入系统音频焦点 (AUDIOFOCUS_GAIN)，确保锁屏媒体特权；
+ * 3. 持有专用的局部 WakeLock 守护，确保在后台与锁屏切段时 CPU 保持唤醒；
+ * 4. 具备脱离 Activity 独立在后台连播下一章并持久化进度的全自治能力。
  */
 @Singleton
 class TtsPlayer @Inject constructor(
-    @ApplicationContext private val context: Context
+    @ApplicationContext private val context: Context,
+    private val bookRepository: BookRepository
 ) {
     private var tts: TextToSpeech? = null
     private var initOk = false
+
+    private val playerScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
+    private val mainHandler = Handler(Looper.getMainLooper())
 
     private val _ready = MutableStateFlow(false)
     val ready: StateFlow<Boolean> = _ready.asStateFlow()
@@ -39,113 +68,378 @@ class TtsPlayer @Inject constructor(
     private val _rate = MutableStateFlow(1.0f)
     val rate: StateFlow<Float> = _rate.asStateFlow()
 
-    private var queue: List<String> = emptyList()
-    private var queueIndex = 0
-    private var chapterEndCallback: (() -> Unit)? = null
-    private var lastUtteranceId = 0
+    /** 当前正在听书的书籍与章节元数据 */
+    private val _currentBookId = MutableStateFlow("")
+    val currentBookId: StateFlow<String> = _currentBookId.asStateFlow()
 
-    private val mainHandler = android.os.Handler(android.os.Looper.getMainLooper())
+    private val _currentBookTitle = MutableStateFlow("")
+    val currentBookTitle: StateFlow<String> = _currentBookTitle.asStateFlow()
+
+    private val _currentChapterIndex = MutableStateFlow(0)
+    val currentChapterIndex: StateFlow<Int> = _currentChapterIndex.asStateFlow()
+
+    private val _currentChapterTitle = MutableStateFlow("")
+    val currentChapterTitle: StateFlow<String> = _currentChapterTitle.asStateFlow()
+
+    // 播放队列与索引
+    private var queue: List<TtsQueueItem> = emptyList()
+    private var enqueuedCursor = 0
+    private val utteranceMap = ConcurrentHashMap<String, TtsQueueItem>()
+    private var rawParagraphs: List<String> = emptyList()
+
+    // 章节缓存，支持后台自治连播
+    private var chaptersCache: List<ChapterEntity> = emptyList()
+
+    // 外部（如当前活跃的 ViewModel）注册的回调
+    private var chapterEndCallback: (() -> Unit)? = null
+    private var utteranceCounter = 0L
+
+    // WakeLock 守护锁，防止息屏后 CPU 挂起
+    private val powerManager = context.getSystemService(Context.POWER_SERVICE) as? PowerManager
+    private val wakeLock: PowerManager.WakeLock? = powerManager?.newWakeLock(
+        PowerManager.PARTIAL_WAKE_LOCK,
+        "NovelAI:TtsPlayerWakeLock"
+    )?.apply {
+        setReferenceCounted(false)
+    }
+
+    // 音频焦点管理
+    private val audioFocusManager = TtsAudioFocusManager(
+        context = context,
+        onLoss = { isTransient ->
+            if (isTransient) {
+                // 收到临时音频丢失（如电话或导航音），暂停发音
+                pause()
+            } else {
+                // 收到永久音频丢失（如其他音乐播放器启动），停止发音
+                pause()
+            }
+        },
+        onGain = {
+            // 重新获取焦点，恢复发音
+            if (_paused.value) {
+                resume()
+            }
+        }
+    )
 
     init {
         tts = TextToSpeech(context) { status ->
-            initOk = status == TextToSpeech.SUCCESS
+            initOk = (status == TextToSpeech.SUCCESS)
             if (initOk) {
-                // 设置音频流属性为 USAGE_MEDIA，支持锁屏与后台持续发声
                 val audioAttrs = android.media.AudioAttributes.Builder()
                     .setContentType(android.media.AudioAttributes.CONTENT_TYPE_SPEECH)
                     .setUsage(android.media.AudioAttributes.USAGE_MEDIA)
                     .build()
                 tts?.setAudioAttributes(audioAttrs)
 
-                // 中文优先，失败则退回系统默认语言
                 val result = tts?.setLanguage(Locale.SIMPLIFIED_CHINESE)
                 if (result == TextToSpeech.LANG_MISSING_DATA || result == TextToSpeech.LANG_NOT_SUPPORTED) {
                     tts?.setLanguage(Locale.getDefault())
                 }
-                tts?.setSpeechRate(1.05f)
+                tts?.setSpeechRate(_rate.value)
             }
             _ready.value = initOk
         }
+
         tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
             override fun onStart(utteranceId: String?) {
+                acquireWakeLock()
                 _speaking.value = true
                 _paused.value = false
+                if (utteranceId != null) {
+                    utteranceMap[utteranceId]?.let { item ->
+                        _position.value = item.paraIndex
+                    }
+                }
             }
 
             override fun onDone(utteranceId: String?) {
-                mainHandler.post { speakNext() }
+                mainHandler.post {
+                    handleUtteranceCompletion(utteranceId)
+                }
             }
 
             @Deprecated("Deprecated in Java")
             override fun onError(utteranceId: String?) {
-                mainHandler.post { speakNext() }
+                mainHandler.post {
+                    handleUtteranceCompletion(utteranceId)
+                }
             }
         })
     }
 
-    /** 调节语速，立即生效（正在朗读时从当前段重读） */
+    private fun acquireWakeLock() {
+        try {
+            if (wakeLock?.isHeld != true) {
+                // 最长保持 2 小时，避免无限制泄漏，正常在停止/暂停时释放
+                wakeLock?.acquire(2 * 60 * 60 * 1000L)
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+
+    private fun releaseWakeLock() {
+        try {
+            if (wakeLock?.isHeld == true) {
+                wakeLock?.release()
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+
+    /** 调节语速，立即生效 */
     fun setRate(rate: Float) {
         val clamped = rate.coerceIn(0.5f, 3.0f)
         _rate.value = clamped
         tts?.setSpeechRate(clamped)
-        if (_speaking.value && !_paused.value) speakCurrent()
+        if (_speaking.value && !_paused.value) {
+            // 语速改变时重置并从当前段重新发声
+            playFromCurrentPosition()
+        }
     }
 
-    /** 开始朗读一个段落序列；onChapterEnd 在整章读完后于主线程回调 */
-    fun play(paragraphs: List<String>, startIndex: Int = 0, onChapterEnd: () -> Unit) {
+    /**
+     * 绑定书籍元数据及全书章节缓存，为前台展示与后台无感连播提供支持
+     */
+    fun bindBookContext(bookId: String, bookTitle: String, chapters: List<ChapterEntity>) {
+        _currentBookId.value = bookId
+        _currentBookTitle.value = bookTitle
+        this.chaptersCache = chapters
+    }
+
+    /**
+     * 开始朗读指定章节的段落序列
+     */
+    fun play(
+        paragraphs: List<String>,
+        startIndex: Int = 0,
+        chapterIndex: Int = _currentChapterIndex.value,
+        chapterTitle: String = _currentChapterTitle.value,
+        onChapterEnd: (() -> Unit)? = null
+    ) {
         if (!initOk) return
         chapterEndCallback = onChapterEnd
-        queue = paragraphs.drop(startIndex).flatMap { splitLongParagraph(it) }
-        queueIndex = 0
+        rawParagraphs = paragraphs
+        _currentChapterIndex.value = chapterIndex
+        _currentChapterTitle.value = chapterTitle
+
+        // 请求音频焦点
+        audioFocusManager.requestFocus()
+        acquireWakeLock()
+
+        // 构建段落切块队列
+        val items = mutableListOf<TtsQueueItem>()
+        for (pIdx in startIndex until paragraphs.size) {
+            val chunks = splitLongParagraph(paragraphs[pIdx])
+            val isLastPara = (pIdx == paragraphs.lastIndex)
+            for (cIdx in chunks.indices) {
+                val isLastChunk = isLastPara && (cIdx == chunks.lastIndex)
+                utteranceCounter++
+                val uId = "utt_${pIdx}_${cIdx}_${utteranceCounter}"
+                val item = TtsQueueItem(
+                    paraIndex = pIdx,
+                    chunkIndex = cIdx,
+                    text = chunks[cIdx],
+                    isLastChunkOfChapter = isLastChunk,
+                    utteranceId = uId
+                )
+                items.add(item)
+                utteranceMap[uId] = item
+            }
+        }
+
+        queue = items
+        enqueuedCursor = 0
         _position.value = startIndex
         _paused.value = false
-        speakCurrent()
-    }
 
-    private fun speakCurrent() {
-        val engine = tts ?: return
-        if (queueIndex >= queue.size) {
+        if (queue.isEmpty()) {
             _speaking.value = false
-            chapterEndCallback?.invoke()
+            onChapterFinished()
             return
         }
-        lastUtteranceId++
-        engine.speak(queue[queueIndex], TextToSpeech.QUEUE_FLUSH, null, "utt_$lastUtteranceId")
-        _speaking.value = true
-    }
 
-    private fun speakNext() {
-        if (_paused.value) return
-        queueIndex++
-        // 段落级位置回推（队列被 splitLongParagraph 展开过，仅作近似指示）
-        _position.value += 1
-        speakCurrent()
-    }
-
-    /** 暂停：停止当前 utterance，恢复时从当前段重读 */
-    fun pause() {
-        if (!_speaking.value) return
-        _paused.value = true
+        // 停止之前的 utterance 并清空 TTS 引擎
         tts?.stop()
-        _speaking.value = false
+
+        // 核心双重缓冲机制：首段使用 QUEUE_FLUSH 启动，紧随其后的下一段使用 QUEUE_ADD 提前排队
+        feedTtsPipeline(isInitial = true)
     }
 
+    /**
+     * 维持 TTS 引擎待播管道：始终保持引擎内有 1~2 个未播放完毕的 chunk，杜绝硬件音频设备进入空闲
+     */
+    private fun feedTtsPipeline(isInitial: Boolean = false) {
+        val engine = tts ?: return
+        if (enqueuedCursor >= queue.size) return
+
+        if (isInitial) {
+            // 第一块：清空并立即发声
+            val first = queue[enqueuedCursor++]
+            engine.speak(first.text, TextToSpeech.QUEUE_FLUSH, null, first.utteranceId)
+            _speaking.value = true
+
+            // 第二块：如果存在，提前 QUEUE_ADD 放入待播队列，形成无缝衔接
+            if (enqueuedCursor < queue.size) {
+                val second = queue[enqueuedCursor++]
+                engine.speak(second.text, TextToSpeech.QUEUE_ADD, null, second.utteranceId)
+            }
+        } else {
+            // 每次播完一块，如果队列里还有未提交的块，立即追加一块进入引擎
+            if (enqueuedCursor < queue.size) {
+                val next = queue[enqueuedCursor++]
+                engine.speak(next.text, TextToSpeech.QUEUE_ADD, null, next.utteranceId)
+            }
+        }
+    }
+
+    /** 处理 utterance 播放完成 */
+    private fun handleUtteranceCompletion(utteranceId: String?) {
+        if (_paused.value) return
+        val item = utteranceId?.let { utteranceMap.remove(it) }
+
+        if (item?.isLastChunkOfChapter == true) {
+            // 整章读完
+            _speaking.value = false
+            onChapterFinished()
+        } else {
+            // 读完当前块，继续补充管道中的下一块
+            feedTtsPipeline(isInitial = false)
+        }
+    }
+
+    /** 本章读完后的处理：优先调用 ViewModel 外部回调，若无回调则走后台自治连播 */
+    private fun onChapterFinished() {
+        if (chapterEndCallback != null) {
+            chapterEndCallback?.invoke()
+        } else {
+            // 后台自治连播：ViewModel 已经离开或被销毁时自动播下一章
+            playNextChapterAuto()
+        }
+    }
+
+    /** 后台自治切下一章并持续朗读 */
+    fun playNextChapterAuto() {
+        val list = chaptersCache
+        val nextIdx = _currentChapterIndex.value + 1
+        if (list.isNotEmpty() && nextIdx in list.indices) {
+            val nextChapter = list[nextIdx]
+            val bId = _currentBookId.value
+            val bTitle = _currentBookTitle.value
+
+            playerScope.launch {
+                // 保存阅读进度到数据库
+                runCatching {
+                    bookRepository.saveProgress(bId, nextIdx, list.size)
+                }
+
+                // 拆分段落并播放
+                val paragraphs = splitParagraphs(nextChapter.content)
+                play(
+                    paragraphs = paragraphs,
+                    startIndex = 0,
+                    chapterIndex = nextIdx,
+                    chapterTitle = nextChapter.title,
+                    onChapterEnd = null
+                )
+
+                // 更新系统前台通知栏
+                TtsMediaManager.startOrUpdateService(
+                    context = context,
+                    bookId = bId,
+                    bookTitle = bTitle,
+                    chapterTitle = nextChapter.title,
+                    chapterIndex = nextIdx,
+                    totalChapters = list.size,
+                    isPlaying = true,
+                    isPaused = false
+                )
+            }
+        } else {
+            // 到达最后一章，自动停止
+            stop()
+            TtsMediaManager.stopService(context)
+        }
+    }
+
+    /** 后台自治切上一章 */
+    fun playPreviousChapterAuto() {
+        val list = chaptersCache
+        val prevIdx = _currentChapterIndex.value - 1
+        if (list.isNotEmpty() && prevIdx in list.indices) {
+            val prevChapter = list[prevIdx]
+            val bId = _currentBookId.value
+            val bTitle = _currentBookTitle.value
+
+            playerScope.launch {
+                runCatching {
+                    bookRepository.saveProgress(bId, prevIdx, list.size)
+                }
+                val paragraphs = splitParagraphs(prevChapter.content)
+                play(
+                    paragraphs = paragraphs,
+                    startIndex = 0,
+                    chapterIndex = prevIdx,
+                    chapterTitle = prevChapter.title,
+                    onChapterEnd = null
+                )
+                TtsMediaManager.startOrUpdateService(
+                    context = context,
+                    bookId = bId,
+                    bookTitle = bTitle,
+                    chapterTitle = prevChapter.title,
+                    chapterIndex = prevIdx,
+                    totalChapters = list.size,
+                    isPlaying = true,
+                    isPaused = false
+                )
+            }
+        }
+    }
+
+    private fun playFromCurrentPosition() {
+        if (rawParagraphs.isNotEmpty()) {
+            play(rawParagraphs, startIndex = _position.value, onChapterEnd = chapterEndCallback)
+        }
+    }
+
+    /** 暂停朗读 */
+    fun pause() {
+        if (!_speaking.value && !_paused.value) return
+        _paused.value = true
+        _speaking.value = false
+        tts?.stop()
+        releaseWakeLock()
+        audioFocusManager.abandonFocus()
+    }
+
+    /** 恢复朗读 */
     fun resume() {
         if (!_paused.value) return
         _paused.value = false
-        speakCurrent()
+        audioFocusManager.requestFocus()
+        acquireWakeLock()
+        playFromCurrentPosition()
     }
 
+    /** 停止朗读并清理资源 */
     fun stop() {
         _paused.value = false
         _speaking.value = false
         queue = emptyList()
-        queueIndex = 0
+        utteranceMap.clear()
+        enqueuedCursor = 0
+        rawParagraphs = emptyList()
         chapterEndCallback = null
         tts?.stop()
+        releaseWakeLock()
+        audioFocusManager.abandonFocus()
     }
 
-    /** 释放引擎（Activity 销毁时调用） */
+    /** 释放引擎 */
     fun shutdown() {
         stop()
         tts?.shutdown()
@@ -155,9 +449,14 @@ class TtsPlayer @Inject constructor(
     }
 
     companion object {
-        private const val MAX_CHUNK = 2000
+        private const val MAX_CHUNK = 1500
 
-        /** 超长段落按句子边界切块，避免超过 TTS 4000 字符上限 */
+        fun splitParagraphs(content: String): List<String> {
+            return content.lines()
+                .map { it.trim() }
+                .filter { it.isNotEmpty() }
+        }
+
         fun splitLongParagraph(text: String): List<String> {
             if (text.length <= MAX_CHUNK) return listOf(text)
             val chunks = mutableListOf<String>()

@@ -235,6 +235,41 @@ fun SettingsScreen(
 
         Spacer(Modifier.height(20.dp))
 
+        Spacer(Modifier.height(20.dp))
+
+        val screenContext = androidx.compose.ui.platform.LocalContext.current
+        val isIgnoringBattery = remember {
+            com.novelai.assistant.data.tts.BatteryOptimizationHelper.isIgnoringBatteryOptimizations(screenContext)
+        }
+        SectionCard(
+            title = "系统与后台听书",
+            footer = "部分定制系统在手机熄屏后会强制休眠进程，设置为「无限制」可确保锁屏熄屏听书持续稳定运行"
+        ) {
+            SettingRow(
+                title = "后台持续听书保活",
+                subtitle = if (isIgnoringBattery) "已获取电池无限制白名单，锁屏熄屏不中断" else "当前未开启白名单，熄屏易被系统误杀，点此配置",
+                icon = Icons.Rounded.Cached,
+                onClick = {
+                    com.novelai.assistant.data.tts.BatteryOptimizationHelper.requestIgnoreBatteryOptimizations(screenContext)
+                },
+                trailing = {
+                    Surface(
+                        shape = CircleShape,
+                        color = if (isIgnoringBattery) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.errorContainer
+                    ) {
+                        Text(
+                            text = if (isIgnoringBattery) "已就绪" else "去开启",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = if (isIgnoringBattery) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onErrorContainer,
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                        )
+                    }
+                }
+            )
+        }
+
+        Spacer(Modifier.height(20.dp))
+
         SectionCard(title = "关于", footer = "AI 智阅小说 v${com.novelai.assistant.BuildConfig.VERSION_NAME} · 本地阅读 + AI 伴读续写 · 隐私数据仅存本机") {
             SettingRow(
                 title = "手势提示",

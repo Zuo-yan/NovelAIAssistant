@@ -37,11 +37,25 @@ object TtsMediaManager {
         this.listener = l
     }
 
+    fun hasListener(): Boolean = (listener != null)
+
     fun dispatchPlay() { listener?.onPlay() }
     fun dispatchPause() { listener?.onPause() }
     fun dispatchSkipToNext() { listener?.onSkipToNext() }
     fun dispatchSkipToPrevious() { listener?.onSkipToPrevious() }
     fun dispatchStop() { listener?.onStop() }
+
+    /** 从 TtsPlayer 状态便捷同步服务 */
+    fun syncPlayerState(player: TtsPlayer, isPlaying: Boolean, isPaused: Boolean) {
+        val service = TtsPlaybackService.instance ?: return
+        currentInfo = currentInfo.copy(
+            isPlaying = isPlaying,
+            isPaused = isPaused,
+            chapterIndex = player.currentChapterIndex.value,
+            chapterTitle = player.currentChapterTitle.value.ifBlank { currentInfo.chapterTitle }
+        )
+        service.updateNotification()
+    }
 
     /** 开始播放时启动或更新前台媒体服务 */
     fun startOrUpdateService(

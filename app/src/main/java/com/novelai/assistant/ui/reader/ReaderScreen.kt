@@ -137,7 +137,7 @@ fun ReaderScreen(
     onBack: () -> Unit,
     onGenerate: (bookId: String, chapterId: String, mode: String) -> Unit,
     onOpenTree: (String) -> Unit,
-    onAsk: (bookId: String, quote: String) -> Unit,
+    onAsk: (bookId: String, quote: String, action: String) -> Unit,
     viewModel: ReaderViewModel = hiltViewModel()
 ) {
     val book by viewModel.book.collectAsStateWithLifecycle()
@@ -234,6 +234,19 @@ fun ReaderScreen(
     val exportLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.CreateDocument("text/plain")
     ) { uri -> viewModel.exportChapter(uri, exportMarkdown) }
+
+    // 目录列表滚动状态：打开抽屉时自动定位到当前阅读章节
+    val tocListState = rememberLazyListState()
+    LaunchedEffect(tocOpen, tocFilter) {
+        if (tocOpen && tocItems.isNotEmpty()) {
+            val targetIdx = tocItems.indexOfFirst { it.chapter.id == currentChapter?.id }
+            if (targetIdx >= 0) {
+                // 向上偏移 2 项，让当前章节正好位于屏幕上半部分居中位置
+                val scrollPos = (targetIdx - 2).coerceAtLeast(0)
+                tocListState.scrollToItem(scrollPos)
+            }
+        }
+    }
 
     BackHandler(enabled = tocOpen || settingsOpen || timerSheetOpen || quotedText != null || actionChapter != null || renameChapterTarget != null || confirmDeleteChapter != null) {
         when {
@@ -620,17 +633,22 @@ fun ReaderScreen(
                     QuoteChip("解析深意", Icons.Rounded.AutoAwesome, MaterialTheme.colorScheme.primary) {
                         val text = quotedText ?: ""
                         viewModel.clearQuote()
-                        onAsk(viewModel.bookId, "【选段】$text\n\n【指令】请解析这段文字的深意、伏笔与表达技巧。")
+                        onAsk(viewModel.bookId, text, "解析深意")
                     }
                     QuoteChip("情绪总结", Icons.Rounded.Tune, MaterialTheme.colorScheme.secondary) {
                         val text = quotedText ?: ""
                         viewModel.clearQuote()
-                        onAsk(viewModel.bookId, "【选段】$text\n\n【指令】请总结这段文字的情绪基调，并分析人物心理。")
+                        onAsk(viewModel.bookId, text, "情绪总结")
                     }
                     QuoteChip("AI吐槽", Icons.Rounded.AutoAwesome, Color(0xFFE91E63)) {
                         val text = quotedText ?: ""
                         viewModel.clearQuote()
-                        onAsk(viewModel.bookId, "【选段】$text\n\n【指令】请用轻松幽默的口吻吐槽这段文字。")
+                        onAsk(viewModel.bookId, text, "AI吐槽")
+                    }
+                    QuoteChip("选段伴读", Icons.Rounded.AutoAwesome, Color(0xFF7C4DFF)) {
+                        val text = quotedText ?: ""
+                        viewModel.clearQuote()
+                        onAsk(viewModel.bookId, text, "")
                     }
                     IconButton(
                         onClick = { viewModel.clearQuote() },
@@ -693,7 +711,7 @@ fun ReaderScreen(
                                 modifier = Modifier.padding(horizontal = 16.dp)
                             )
                             Spacer(Modifier.height(6.dp))
-                            LazyColumn(Modifier.weight(1f)) {
+                            LazyColumn(state = tocListState, modifier = Modifier.weight(1f)) {
                                 itemsIndexed(tocItems, key = { _, item -> item.chapter.id }) { _, item ->
                                     val isCurrent = item.chapter.id == currentChapter?.id
                                     Row(
@@ -1738,6 +1756,51 @@ private fun TtsTimerSheet(
                                 modifier = Modifier.size(20.dp)
                             )
                         }
+                    }
+                }
+            }
+
+            // 针对息屏自动停止的系统电池优化检测与一键引导
+            val sheetContext = androidx.compose.ui.platform.LocalContext.current
+            val isIgnoringBattery = remember { com.novelai.assistant.data.tts.BatteryOptimizationHelper.isIgnoringBatteryOptimizations(sheetContext) }
+            if (!isIgnoringBattery) {
+                Spacer(Modifier.height(4.dp))
+                Surface(
+                    shape = MaterialTheme.shapes.medium,
+                    color = MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.5f),
+                    onClick = { com.novelai.assistant.data.tts.BatteryOptimizationHelper.requestIgnoreBatteryOptimizations(sheetContext) },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        Modifier.padding(horizontal = 14.dp, vertical = 11.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Icon(
+                            Icons.Rounded.Timer,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.tertiary,
+                            modifier = Modifier.size(20.dp)
+                        )
+                        Column(Modifier.weight(1f)) {
+                            Text(
+                                "防息屏中断：设置后台无限制",
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onTertiaryContainer
+                            )
+                            Text(
+                                "手机熄屏易被系统省电杀除，点此开启无限制运行",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onTertiaryContainer.copy(alpha = 0.85f)
+                            )
+                        }
+                        Icon(
+                            Icons.Rounded.KeyboardArrowRight,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.tertiary,
+                            modifier = Modifier.size(18.dp)
+                        )
                     }
                 }
             }

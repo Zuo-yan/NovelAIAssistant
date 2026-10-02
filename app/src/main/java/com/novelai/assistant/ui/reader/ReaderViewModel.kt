@@ -117,12 +117,31 @@ class ReaderViewModel @Inject constructor(
         if (initialChapterIndex >= 0) {
             _chapterIndex.value = initialChapterIndex
         }
-        // 初始章节：书籍加载后定位到上次阅读位置
-        book.onEach { b ->
-            if (b != null && _chapterIndex.value == -1 && b.currentReadingChapterIndex >= 0) {
-                _chapterIndex.value = b.currentReadingChapterIndex
+        // 持续同步书籍与章节上下文给全局 TtsPlayer
+        chapters.onEach { list ->
+            if (list.isNotEmpty()) {
+                val bTitle = book.value?.title ?: ""
+                ttsPlayer.bindBookContext(bookId, bTitle, list)
             }
         }.launchIn(viewModelScope)
+
+        // 初始章节：书籍加载后定位到上次阅读位置
+        book.onEach { b ->
+            if (b != null) {
+                ttsPlayer.bindBookContext(bookId, b.title, chapters.value)
+                if (_chapterIndex.value == -1 && b.currentReadingChapterIndex >= 0) {
+                    _chapterIndex.value = b.currentReadingChapterIndex
+                }
+            }
+        }.launchIn(viewModelScope)
+
+        // 若重新进入页面时后台正在朗读本书，无缝同步播放进度
+        if (ttsPlayer.currentBookId.value == bookId && (ttsPlayer.speaking.value || ttsPlayer.paused.value)) {
+            val playingIndex = ttsPlayer.currentChapterIndex.value
+            if (playingIndex >= 0) {
+                _chapterIndex.value = playingIndex
+            }
+        }
 
         // 注册系统媒体卡片/通知栏动作回调
         TtsMediaManager.setActionListener(object : TtsMediaActionListener {
@@ -265,7 +284,13 @@ class ReaderViewModel @Inject constructor(
             return
         }
         val validIndex = startIndex.coerceIn(0, paragraphs.lastIndex)
-        ttsPlayer.play(paragraphs, startIndex = validIndex) { onTtsChapterEnd() }
+        ttsPlayer.play(
+            paragraphs = paragraphs,
+            startIndex = validIndex,
+            chapterIndex = chapter.chapterIndex,
+            chapterTitle = chapter.title,
+            onChapterEnd = { onTtsChapterEnd() }
+        )
         syncMediaNotification(chapter, isPlaying = true, isPaused = false)
     }
 
@@ -318,11 +343,8 @@ class ReaderViewModel @Inject constructor(
             _targetPageOnChapterLoad.value = 0
             _chapterIndex.value = next
             scheduleProgressSave()
-            viewModelScope.launch {
-                // 微延迟确保 UI 分页引擎就绪
-                delay(150)
-                startTtsForChapter(nextChapter, 0)
-            }
+            // 立即连播下一章，无需协程挂起延迟，确保锁屏息屏下无缝发声
+            startTtsForChapter(nextChapter, 0)
         } else {
             // 已播放到全书最后一章，自动停止
             stopTts(resetTimer = true)
@@ -330,12 +352,16 @@ class ReaderViewModel @Inject constructor(
     }
 
     override fun onCleared() {
-        ttsTimerJob?.cancel()
-        ttsPlayer.stop()
-        TtsMediaManager.setActionListener(null)
-        TtsMediaManager.stopService(context)
-        // 兜底保存
-        val idx = _chapterIndex.value
+        // 如果正在听书，保持后台播放器与前台服务继续运行，不因 Activity/ViewModel 回收而强杀
+        val isTtsActive = ttsPlayer.speaking.value || ttsPlayer.paused.value
+        if (!isTtsActive) {
+            ttsTimerJob?.cancel()
+            ttsPlayer.stop()
+            TtsMediaManager.setActionListener(null)
+            TtsMediaManager.stopService(context)
+        }
+        // 兜底保存进度
+        val idx = if (isTtsActive) ttsPlayer.currentChapterIndex.value else _chapterIndex.value
         if (idx >= 0) {
             kotlinx.coroutines.runBlocking {
                 runCatching { bookRepository.saveProgress(bookId, idx, chapters.value.size) }
