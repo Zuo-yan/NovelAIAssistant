@@ -60,6 +60,27 @@ class ReadingPreferencesRepository @Inject constructor(
     suspend fun setTtsSpeed(speed: Float) = dataStore.edit { it[ttsSpeed] = speed.coerceIn(0.5f, 3f) }
     suspend fun currentTtsSpeed(): Float = dataStore.data.map { it[ttsSpeed] ?: 1.0f }.first()
 
+    private val ttsVoiceName = stringPreferencesKey("tts_voice_name")
+    private val listenPillX = floatPreferencesKey("listen_pill_x_frac")
+    private val listenPillY = floatPreferencesKey("listen_pill_y_frac")
+
+    /** 听书音色（null = 系统默认音色） */
+    suspend fun setTtsVoice(name: String?) = dataStore.edit {
+        if (name == null) it.remove(ttsVoiceName) else it[ttsVoiceName] = name
+    }
+
+    suspend fun currentTtsVoice(): String? = dataStore.data.map { it[ttsVoiceName] }.first()
+
+    /** 听书悬浮胶囊位置（屏幕比例坐标 0..1，跨分辨率恢复） */
+    val listenPillPosition: Flow<Pair<Float, Float>> = dataStore.data.map { p ->
+        (p[listenPillX] ?: 0.78f) to (p[listenPillY] ?: 0.52f)
+    }
+
+    suspend fun setListenPillPosition(xFraction: Float, yFraction: Float) = dataStore.edit {
+        it[listenPillX] = xFraction.coerceIn(0f, 1f)
+        it[listenPillY] = yFraction.coerceIn(0f, 1f)
+    }
+
     val settings: Flow<ReadingSettings> = dataStore.data.map { p ->
         ReadingSettings(
             fontSizeSp = p[Keys.fontSize] ?: 18,

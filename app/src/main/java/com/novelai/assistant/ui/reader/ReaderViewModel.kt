@@ -30,16 +30,7 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
-enum class TtsTimerMode(val label: String, val minutes: Int) {
-    OFF("不设置（听到全书完）", 0),
-    END_OF_CHAPTER("听完本章停止", -1),
-    MIN_15("15 分钟", 15),
-    MIN_20("20 分钟", 20),
-    MIN_30("30 分钟", 30),
-    MIN_45("45 分钟", 45),
-    MIN_60("60 分钟", 60),
-    MIN_90("90 分钟", 90)
-}
+typealias TtsTimerMode = com.novelai.assistant.data.tts.TtsTimerMode
 
 enum class TocFilter(val label: String) {
     ALL("全部"), ORIGINAL("仅原作"), AI("AI 衍生"), TREE("分支树")
@@ -213,54 +204,16 @@ class ReaderViewModel @Inject constructor(
     val ttsSpeaking = ttsPlayer.speaking
     val ttsPaused = ttsPlayer.paused
     val ttsPosition = ttsPlayer.position
-
-    private val _ttsSpeed = MutableStateFlow(1.0f)
-    val ttsSpeed: StateFlow<Float> = _ttsSpeed.asStateFlow()
-
-    // 听书定时器
-    private val _ttsTimerMode = MutableStateFlow(TtsTimerMode.OFF)
-    val ttsTimerMode: StateFlow<TtsTimerMode> = _ttsTimerMode.asStateFlow()
-
-    private val _ttsTimerRemainingSeconds = MutableStateFlow<Int?>(null)
-    val ttsTimerRemainingSeconds: StateFlow<Int?> = _ttsTimerRemainingSeconds.asStateFlow()
-
-    private var ttsTimerJob: Job? = null
-
-    init {
-        // 加载持久化的语速
-        viewModelScope.launch {
-            val saved = readingPreferencesRepository.currentTtsSpeed()
-            _ttsSpeed.value = saved
-            ttsPlayer.setRate(saved)
-        }
-    }
+    val ttsSpeed: StateFlow<Float> = ttsPlayer.rate
+    val ttsTimerMode: StateFlow<TtsTimerMode> = ttsPlayer.timerMode
+    val ttsTimerRemainingSeconds: StateFlow<Int?> = ttsPlayer.timerRemainingSeconds
 
     fun setTtsSpeed(speed: Float) {
-        val clamped = speed.coerceIn(0.5f, 3f)
-        _ttsSpeed.value = clamped
-        ttsPlayer.setRate(clamped)
-        launchPref { readingPreferencesRepository.setTtsSpeed(clamped) }
+        ttsPlayer.setRate(speed)
     }
 
     fun setTtsTimerMode(mode: TtsTimerMode) {
-        ttsTimerJob?.cancel()
-        _ttsTimerMode.value = mode
-        if (mode.minutes > 0) {
-            val totalSeconds = mode.minutes * 60
-            _ttsTimerRemainingSeconds.value = totalSeconds
-            ttsTimerJob = viewModelScope.launch {
-                var remaining = totalSeconds
-                while (remaining > 0) {
-                    delay(1000)
-                    remaining -= 1
-                    _ttsTimerRemainingSeconds.value = remaining
-                }
-                // 倒计时结束，停止朗读并重置定时状态
-                stopTts(resetTimer = true)
-            }
-        } else {
-            _ttsTimerRemainingSeconds.value = null
-        }
+        ttsPlayer.setTimerMode(mode)
     }
 
     /** 开始/停止朗读当前章；支持指定起始段落，读毕自动连播下一章 */
@@ -307,9 +260,7 @@ class ReaderViewModel @Inject constructor(
     fun stopTts(resetTimer: Boolean = false) {
         if (ttsPlayer.speaking.value || ttsPlayer.paused.value) ttsPlayer.stop()
         if (resetTimer) {
-            ttsTimerJob?.cancel()
-            _ttsTimerMode.value = TtsTimerMode.OFF
-            _ttsTimerRemainingSeconds.value = null
+            ttsPlayer.resetTimer()
         }
         TtsMediaManager.stopService(context)
     }
@@ -330,7 +281,7 @@ class ReaderViewModel @Inject constructor(
 
     private fun onTtsChapterEnd() {
         // 1. 若当前设置了“听完本章停止”，则停止朗读并重置定时模式
-        if (_ttsTimerMode.value == TtsTimerMode.END_OF_CHAPTER) {
+        if (ttsPlayer.timerMode.value == TtsTimerMode.END_OF_CHAPTER) {
             stopTts(resetTimer = true)
             return
         }
@@ -355,7 +306,6 @@ class ReaderViewModel @Inject constructor(
         // 如果正在听书，保持后台播放器与前台服务继续运行，不因 Activity/ViewModel 回收而强杀
         val isTtsActive = ttsPlayer.speaking.value || ttsPlayer.paused.value
         if (!isTtsActive) {
-            ttsTimerJob?.cancel()
             ttsPlayer.stop()
             TtsMediaManager.setActionListener(null)
             TtsMediaManager.stopService(context)

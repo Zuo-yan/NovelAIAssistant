@@ -40,7 +40,7 @@ class FanqieFetcher @Inject constructor() {
                 if (t.isNotBlank()) chapters.add(FetchedChapter(itemId, t, ""))
             }
             if (chapters.isEmpty()) error("目录解析失败：页面可能需要验证或结构已变化")
-            FetchedBook(id, title, author, chapters)
+            FetchedBook(id, title, author, chapters, CoverUrlExtractor.extract(doc))
         }
     }
 

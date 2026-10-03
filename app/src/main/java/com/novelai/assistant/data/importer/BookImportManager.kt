@@ -1,6 +1,10 @@
 package com.novelai.assistant.data.importer
 
 import android.content.Context
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.graphics.Matrix
+import android.media.ExifInterface
 import android.net.Uri
 import android.provider.OpenableColumns
 import com.novelai.assistant.data.db.BookEntity
@@ -11,8 +15,11 @@ import com.novelai.assistant.data.db.BookDao
 import dagger.hilt.android.qualifiers.ApplicationContext
 import java.io.File
 import java.util.UUID
+import kotlin.math.max
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 /** 导入调度器：识别扩展名 → 分发解析器 → 落库 */
 @Singleton
@@ -94,6 +101,85 @@ class BookImportManager @Inject constructor(
             }
         }
         return uri.lastPathSegment
+    }
+
+    private fun coversDir(): File = File(context.filesDir, "covers").apply { mkdirs() }
+
+    /** 保存抓取到的封面字节（自动封面），失败返回 null */
+    fun storeCoverBytes(bookId: String, bytes: ByteArray): String? = runCatching {
+        val file = File(coversDir(), "$bookId.img")
+        file.writeBytes(bytes)
+        file.absolutePath
+    }.getOrNull()
+
+    /**
+     * 从系统相册导入封面：EXIF 转正、最长边限制 1024、压缩为 JPEG 落盘，并清理旧封面文件。
+     * 成功返回新封面绝对路径，失败返回 null。
+     */
+    suspend fun setCoverFromUri(bookId: String, oldCoverPath: String?, uri: Uri): String? =
+        withContext(Dispatchers.IO) {
+            runCatching {
+                val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                context.contentResolver.openInputStream(uri)?.use {
+                    BitmapFactory.decodeStream(it, null, bounds)
+                }
+                if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return@runCatching null
+
+                val sample = max(1, max(bounds.outWidth, bounds.outHeight) / 1024)
+                val decoded = context.contentResolver.openInputStream(uri)?.use {
+                    BitmapFactory.decodeStream(it, null, BitmapFactory.Options().apply { inSampleSize = sample })
+                } ?: return@runCatching null
+
+                val rotation = context.contentResolver.openInputStream(uri)?.use { stream ->
+                    when (ExifInterface(stream).getAttributeInt(ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_NORMAL)) {
+                        ExifInterface.ORIENTATION_ROTATE_90 -> 90f
+                        ExifInterface.ORIENTATION_ROTATE_180 -> 180f
+                        ExifInterface.ORIENTATION_ROTATE_270 -> 270f
+                        else -> 0f
+                    }
+                } ?: 0f
+
+                var bitmap = if (rotation != 0f) {
+                    val matrix = Matrix().apply { postRotate(rotation) }
+                    Bitmap.createBitmap(decoded, 0, 0, decoded.width, decoded.height, matrix, true)
+                } else decoded
+
+                val longest = maxOf(bitmap.width, bitmap.height)
+                if (longest > 1024) {
+                    val scale = 1024f / longest
+                    bitmap = Bitmap.createScaledBitmap(
+                        bitmap,
+                        (bitmap.width * scale).toInt().coerceAtLeast(1),
+                        (bitmap.height * scale).toInt().coerceAtLeast(1),
+                        true
+                    )
+                }
+
+                val file = File(coversDir(), "$bookId.img")
+                file.outputStream().use { bitmap.compress(Bitmap.CompressFormat.JPEG, 90, it) }
+                bitmap.recycle()
+
+                if (!oldCoverPath.isNullOrBlank() && oldCoverPath != file.absolutePath) {
+                    deleteCoverFile(oldCoverPath)
+                }
+                file.absolutePath
+            }.getOrNull()
+        }
+
+    /** 清除封面文件（仅允许删除应用私有 covers 目录内的文件） */
+    fun clearCover(oldCoverPath: String?) {
+        if (oldCoverPath.isNullOrBlank()) return
+        deleteCoverFile(oldCoverPath)
+    }
+
+    private fun deleteCoverFile(path: String) {
+        runCatching {
+            val file = File(path)
+            val coversRoot = File(context.filesDir, "covers").canonicalPath
+            if (file.exists() && file.canonicalPath.startsWith(coversRoot)) {
+                file.delete()
+            }
+        }
     }
 
     companion object {

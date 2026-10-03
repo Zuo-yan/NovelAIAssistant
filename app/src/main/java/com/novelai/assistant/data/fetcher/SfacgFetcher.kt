@@ -15,7 +15,8 @@ data class FetchedBook(
     val bookId: String,
     val title: String,
     val author: String,
-    val chapters: List<FetchedChapter>
+    val chapters: List<FetchedChapter>,
+    val coverUrl: String? = null
 )
 
 /** SF 菠萝包轻小说抓取器：book.sfacg.com 明文 HTML；带登录 Cookie 可抓自己已订阅的付费章节 */
@@ -62,7 +63,7 @@ class SfacgFetcher @Inject constructor() {
                 }
             }
             if (chapters.isEmpty()) error("目录解析失败（页面结构可能已变化）")
-            FetchedBook(id, title, author, chapters)
+            FetchedBook(id, title, author, chapters, CoverUrlExtractor.extract(doc))
         }
     }
 

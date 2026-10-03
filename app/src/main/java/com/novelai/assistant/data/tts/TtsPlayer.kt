@@ -7,11 +7,14 @@ import android.os.PowerManager
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
 import com.novelai.assistant.data.db.ChapterEntity
+import com.novelai.assistant.data.prefs.ReadingPreferencesRepository
 import com.novelai.assistant.data.repository.BookRepository
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -33,6 +36,13 @@ data class TtsQueueItem(
     val utteranceId: String
 )
 
+/** 可选系统音色（来自设备 TTS 引擎） */
+data class TtsVoiceOption(
+    val name: String,
+    val label: String,
+    val isNetworkRequired: Boolean = false
+)
+
 /**
  * 听书播放器核心引擎：
  * 1. 采用双重缓冲预加载（Lookahead / QUEUE_ADD）流水线，消除段落间音频硬件静音空白，杜绝熄屏 Doze 切断；
@@ -43,7 +53,8 @@ data class TtsQueueItem(
 @Singleton
 class TtsPlayer @Inject constructor(
     @ApplicationContext private val context: Context,
-    private val bookRepository: BookRepository
+    private val bookRepository: BookRepository,
+    private val prefs: ReadingPreferencesRepository
 ) {
     private var tts: TextToSpeech? = null
     private var initOk = false
@@ -80,6 +91,26 @@ class TtsPlayer @Inject constructor(
 
     private val _currentChapterTitle = MutableStateFlow("")
     val currentChapterTitle: StateFlow<String> = _currentChapterTitle.asStateFlow()
+
+    /** 可选系统音色与当前选择（null = 引擎默认音色） */
+    private val _voices = MutableStateFlow<List<TtsVoiceOption>>(emptyList())
+    val voices: StateFlow<List<TtsVoiceOption>> = _voices.asStateFlow()
+
+    private val _voiceName = MutableStateFlow<String?>(null)
+    val voiceName: StateFlow<String?> = _voiceName.asStateFlow()
+
+    /** 当前正在朗读的段落原文（供悬浮胶囊与听书模块展示） */
+    private val _currentParagraphText = MutableStateFlow("")
+    val currentParagraphText: StateFlow<String> = _currentParagraphText.asStateFlow()
+
+    // 听书定时：状态与倒计时收敛在全局播放器，离开阅读页后依然生效
+    private val _timerMode = MutableStateFlow(TtsTimerMode.OFF)
+    val timerMode: StateFlow<TtsTimerMode> = _timerMode.asStateFlow()
+
+    private val _timerRemainingSeconds = MutableStateFlow<Int?>(null)
+    val timerRemainingSeconds: StateFlow<Int?> = _timerRemainingSeconds.asStateFlow()
+
+    private var timerJob: Job? = null
 
     // 播放队列与索引
     private var queue: List<TtsQueueItem> = emptyList()
@@ -138,6 +169,7 @@ class TtsPlayer @Inject constructor(
                     tts?.setLanguage(Locale.getDefault())
                 }
                 tts?.setSpeechRate(_rate.value)
+                loadVoices()
             }
             _ready.value = initOk
         }
@@ -150,6 +182,7 @@ class TtsPlayer @Inject constructor(
                 if (utteranceId != null) {
                     utteranceMap[utteranceId]?.let { item ->
                         _position.value = item.paraIndex
+                        _currentParagraphText.value = rawParagraphs.getOrNull(item.paraIndex).orEmpty()
                     }
                 }
             }
@@ -167,6 +200,17 @@ class TtsPlayer @Inject constructor(
                 }
             }
         })
+
+        // 从偏好中恢复上次语速与音色（进程重启后依然生效）
+        playerScope.launch {
+            val savedRate = prefs.currentTtsSpeed()
+            _rate.value = savedRate
+            runCatching { tts?.setSpeechRate(savedRate) }
+            val savedVoice = runCatching { prefs.currentTtsVoice() }.getOrNull()
+            if (savedVoice != null && applyVoiceToEngine(savedVoice)) {
+                _voiceName.value = savedVoice
+            }
+        }
     }
 
     private fun acquireWakeLock() {
@@ -195,10 +239,96 @@ class TtsPlayer @Inject constructor(
         val clamped = rate.coerceIn(0.5f, 3.0f)
         _rate.value = clamped
         tts?.setSpeechRate(clamped)
+        playerScope.launch { prefs.setTtsSpeed(clamped) }
         if (_speaking.value && !_paused.value) {
             // 语速改变时重置并从当前段重新发声
             playFromCurrentPosition()
         }
+    }
+
+    /** 加载系统 TTS 引擎可用音色（中文音色优先） */
+    private fun loadVoices() {
+        val engine = tts ?: return
+        val list = runCatching { engine.voices }.getOrNull().orEmpty()
+        _voices.value = list.map { v ->
+            TtsVoiceOption(
+                name = v.name,
+                label = v.locale.displayName.ifBlank { v.name },
+                isNetworkRequired = v.isNetworkConnectionRequired
+            )
+        }.sortedWith(
+            compareBy(
+                { !(it.label.startsWith("中") || it.label.startsWith("Chinese", true) || it.label.startsWith("cmn")) },
+                { it.label },
+                { it.name }
+            )
+        )
+    }
+
+    /** 将音色应用到引擎；找不到指定音色时保持引擎默认，返回是否成功应用 */
+    private fun applyVoiceToEngine(name: String?): Boolean {
+        val engine = tts ?: return false
+        if (name == null) {
+            runCatching { engine.voice = null }
+            return true
+        }
+        val target = runCatching { engine.voices?.firstOrNull { it.name == name } }.getOrNull()
+            ?: return false
+        return runCatching {
+            engine.voice = target
+            true
+        }.getOrDefault(false)
+    }
+
+    /**
+     * 切换音色，立即生效：
+     * 正在朗读时打断当前句，从当前段落开头以新音色重读；暂停中则在恢复时生效。
+     */
+    fun setVoice(name: String?) {
+        _voiceName.value = name
+        playerScope.launch { prefs.setTtsVoice(name) }
+        applyVoiceToEngine(name)
+        if (_speaking.value && !_paused.value) {
+            playFromCurrentPosition()
+        }
+    }
+
+    /** 试听指定音色：结束当前听书后播放固定短句 */
+    fun auditionVoice(name: String?) {
+        if (!initOk) return
+        stop()
+        applyVoiceToEngine(name)
+        tts?.speak(AUDITION_TEXT, TextToSpeech.QUEUE_FLUSH, null, "audition_" + utteranceCounter++)
+    }
+
+    /** 设置听书定时：倒计时归零或听完本章后自动停止朗读 */
+    fun setTimerMode(mode: TtsTimerMode) {
+        timerJob?.cancel()
+        _timerMode.value = mode
+        if (mode.minutes > 0) {
+            val totalSeconds = mode.minutes * 60
+            _timerRemainingSeconds.value = totalSeconds
+            timerJob = playerScope.launch {
+                var remaining = totalSeconds
+                while (remaining > 0) {
+                    delay(1000)
+                    remaining -= 1
+                    _timerRemainingSeconds.value = remaining
+                }
+                stop()
+                resetTimer()
+            }
+        } else {
+            _timerRemainingSeconds.value = null
+        }
+    }
+
+    /** 重置定时状态 */
+    fun resetTimer() {
+        timerJob?.cancel()
+        timerJob = null
+        _timerMode.value = TtsTimerMode.OFF
+        _timerRemainingSeconds.value = null
     }
 
     /**
@@ -254,6 +384,7 @@ class TtsPlayer @Inject constructor(
         queue = items
         enqueuedCursor = 0
         _position.value = startIndex
+        _currentParagraphText.value = paragraphs.getOrNull(startIndex).orEmpty()
         _paused.value = false
 
         if (queue.isEmpty()) {
@@ -306,13 +437,25 @@ class TtsPlayer @Inject constructor(
             _speaking.value = false
             onChapterFinished()
         } else {
-            // 读完当前块，继续补充管道中的下一块
-            feedTtsPipeline(isInitial = false)
+            if (item == null && queue.isEmpty()) {
+                // 试听短句等引擎外播放结束：收尾播放态
+                _speaking.value = false
+                releaseWakeLock()
+                audioFocusManager.abandonFocus()
+            } else {
+                // 读完当前块，继续补充管道中的下一块
+                feedTtsPipeline(isInitial = false)
+            }
         }
     }
 
     /** 本章读完后的处理：优先调用 ViewModel 外部回调，若无回调则走后台自治连播 */
     private fun onChapterFinished() {
+        if (_timerMode.value == TtsTimerMode.END_OF_CHAPTER) {
+            stop()
+            resetTimer()
+            return
+        }
         if (chapterEndCallback != null) {
             chapterEndCallback?.invoke()
         } else {
@@ -414,6 +557,7 @@ class TtsPlayer @Inject constructor(
         tts?.stop()
         releaseWakeLock()
         audioFocusManager.abandonFocus()
+        TtsMediaManager.syncPlayerState(this, isPlaying = true, isPaused = true)
     }
 
     /** 恢复朗读 */
@@ -423,6 +567,7 @@ class TtsPlayer @Inject constructor(
         audioFocusManager.requestFocus()
         acquireWakeLock()
         playFromCurrentPosition()
+        TtsMediaManager.syncPlayerState(this, isPlaying = true, isPaused = false)
     }
 
     /** 停止朗读并清理资源 */
@@ -433,10 +578,12 @@ class TtsPlayer @Inject constructor(
         utteranceMap.clear()
         enqueuedCursor = 0
         rawParagraphs = emptyList()
+        _currentParagraphText.value = ""
         chapterEndCallback = null
         tts?.stop()
         releaseWakeLock()
         audioFocusManager.abandonFocus()
+        TtsMediaManager.stopService(context)
     }
 
     /** 释放引擎 */
@@ -450,6 +597,7 @@ class TtsPlayer @Inject constructor(
 
     companion object {
         private const val MAX_CHUNK = 1500
+        private const val AUDITION_TEXT = "你好，这是当前音色的试听效果"
 
         fun splitParagraphs(content: String): List<String> {
             return content.lines()

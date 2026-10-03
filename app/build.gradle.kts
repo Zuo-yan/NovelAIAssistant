@@ -15,8 +15,8 @@ android {
         applicationId = "com.novelai.assistant"
         minSdk = 26
         targetSdk = 36
-        versionCode = 12
-        versionName = "0.12.0"
+        versionCode = 14
+        versionName = "0.14.0"
     }
 
     buildTypes {
@@ -37,6 +37,11 @@ android {
     buildFeatures {
         compose = true
         buildConfig = true
+    }
+    testOptions {
+        unitTests {
+            isReturnDefaultValues = true
+        }
     }
 }
 
@@ -86,4 +91,6 @@ dependencies {
     implementation(libs.haze)
     implementation(libs.jsoup)
     implementation(libs.juniversalchardet)
+
+    testImplementation("junit:junit:4.13.2")
 }

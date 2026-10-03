@@ -234,9 +234,10 @@ class TtsPlaybackService : Service() {
     private fun buildNotification(info: TtsMediaInfo): Notification {
         val sessionToken = mediaSession?.sessionToken
 
-        // 点击通知卡片回到阅读器
+        // 点击通知卡片进入专门听书模块
         val contentIntent = Intent(this, MainActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
+            putExtra("EXTRA_ROUTE", "listening")
             putExtra("EXTRA_BOOK_ID", info.bookId)
         }
         val pendingContent = PendingIntent.getActivity(

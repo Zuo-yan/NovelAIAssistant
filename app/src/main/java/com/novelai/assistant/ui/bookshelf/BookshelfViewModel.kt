@@ -96,4 +96,18 @@ class BookshelfViewModel @Inject constructor(
             }
         }
     }
+
+    fun setBookCover(bookId: String, uri: Uri) {
+        viewModelScope.launch {
+            val ok = bookRepository.setManualCover(bookId, uri)
+            _importMessage.value = if (ok) "封面设置成功" else "封面设置失败，请重试"
+        }
+    }
+
+    fun clearBookCover(bookId: String) {
+        viewModelScope.launch {
+            bookRepository.clearManualCover(bookId)
+            _importMessage.value = "已恢复默认封面"
+        }
+    }
 }

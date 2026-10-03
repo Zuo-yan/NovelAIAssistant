@@ -1,6 +1,7 @@
 package com.novelai.assistant.ui.bookshelf
 
 import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
@@ -34,6 +35,8 @@ import androidx.compose.material.icons.rounded.DeleteOutline
 import androidx.compose.material3.TextButton
 import androidx.compose.material.icons.rounded.DriveFileMove
 import androidx.compose.material.icons.rounded.GridView
+import androidx.compose.material.icons.rounded.HideImage
+import androidx.compose.material.icons.rounded.Image
 import androidx.compose.material.icons.rounded.Menu
 import androidx.compose.material.icons.rounded.UploadFile
 import androidx.compose.material.icons.rounded.ViewList
@@ -100,10 +103,21 @@ fun BookshelfScreen(
     var actionBook by remember { mutableStateOf<BookEntity?>(null) }
     var moveBook by remember { mutableStateOf<BookEntity?>(null) }
     var confirmDelete by remember { mutableStateOf<BookEntity?>(null) }
+    var pendingCoverBookId by remember { mutableStateOf<String?>(null) }
 
     val importLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocument()
     ) { uri -> viewModel.importBook(uri) }
+
+    val coverPickerLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.PickVisualMedia()
+    ) { uri ->
+        val bid = pendingCoverBookId
+        if (bid != null && uri != null) {
+            viewModel.setBookCover(bid, uri)
+        }
+        pendingCoverBookId = null
+    }
 
     LaunchedEffect(message) {
         message?.let {
@@ -264,6 +278,26 @@ fun BookshelfScreen(
                 }
                 SimpleAction(Icons.Rounded.DriveFileMove, "移动到书单") {
                     moveBook = book; actionBook = null
+                }
+                SimpleAction(
+                    icon = Icons.Rounded.Image,
+                    label = if (book.coverUri.isNullOrBlank()) "设置封面" else "更换封面"
+                ) {
+                    val bid = book.id
+                    actionBook = null
+                    pendingCoverBookId = bid
+                    coverPickerLauncher.launch(
+                        PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+                    )
+                }
+                if (!book.coverUri.isNullOrBlank()) {
+                    SimpleAction(
+                        icon = Icons.Rounded.HideImage,
+                        label = "恢复默认封面"
+                    ) {
+                        viewModel.clearBookCover(book.id)
+                        actionBook = null
+                    }
                 }
                 SimpleAction(Icons.Rounded.Delete, "删除本书", tint = MaterialTheme.colorScheme.error) {
                     actionBook = null; confirmDelete = book

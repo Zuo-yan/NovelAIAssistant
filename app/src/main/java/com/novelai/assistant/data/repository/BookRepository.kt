@@ -36,21 +36,37 @@ class BookRepository @Inject constructor(
 
     suspend fun import(uri: Uri): BookImportManager.ImportResult = importManager.importFromUri(uri)
 
-    /** 抓取器导入：直接落库在线抓取的章节 */
+    /** 抓取器导入：直接落库在线抓取的章节（顺带下载源站封面并记录源站标识） */
     suspend fun importFetched(
         title: String,
         author: String,
         sourceType: com.novelai.assistant.data.db.BookSourceType,
-        chapters: List<Pair<String, String>>
+        chapters: List<Pair<String, String>>,
+        coverUrl: String? = null,
+        sourceBookId: String? = null
     ): String {
         val bookId = java.util.UUID.randomUUID().toString()
+        val sourcePathValue = when (sourceType) {
+            com.novelai.assistant.data.db.BookSourceType.FANQIE ->
+                sourceBookId?.let { "fanqienovel.com/page/$it" }
+            com.novelai.assistant.data.db.BookSourceType.BOLUOBAO ->
+                sourceBookId?.let { "book.sfacg.com/Novel/$it/MainIndex/" }
+            else -> null
+        } ?: title
+        val coverPath = coverUrl?.let { url ->
+            runCatching {
+                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                    downloadBytes(url)?.let { importManager.storeCoverBytes(bookId, it) }
+                }
+            }.getOrNull()
+        }
         bookDao.insert(
             BookEntity(
                 id = bookId,
                 title = title,
                 author = author,
-                coverUri = null,
-                sourcePath = title,
+                coverUri = coverPath,
+                sourcePath = sourcePathValue,
                 sourceType = sourceType,
                 totalChapters = chapters.size,
                 createdAt = System.currentTimeMillis()
@@ -70,6 +86,31 @@ class BookRepository @Inject constructor(
         )
         return bookId
     }
+
+    /** 手动设置封面：从系统相册 URI 处理并落盘 */
+    suspend fun setManualCover(bookId: String, uri: Uri): Boolean {
+        val book = bookDao.getById(bookId) ?: return false
+        val path = importManager.setCoverFromUri(bookId, book.coverUri, uri) ?: return false
+        bookDao.update(book.copy(coverUri = path))
+        return true
+    }
+
+    /** 恢复默认占位封面 */
+    suspend fun clearManualCover(bookId: String) {
+        val book = bookDao.getById(bookId) ?: return
+        importManager.clearCover(book.coverUri)
+        bookDao.update(book.copy(coverUri = null))
+    }
+
+    private fun downloadBytes(url: String): ByteArray? = runCatching {
+        val conn = java.net.URL(url).openConnection() as java.net.HttpURLConnection
+        conn.connectTimeout = 15_000
+        conn.readTimeout = 20_000
+        conn.setRequestProperty("User-Agent", com.novelai.assistant.data.fetcher.DESKTOP_UA)
+        if (conn.responseCode !in 200..299) return@runCatching null
+        val bytes = conn.inputStream.use { it.readBytes() }
+        if (bytes.isEmpty() || bytes.size > 8 * 1024 * 1024) null else bytes
+    }.getOrNull()
 
     suspend fun deleteBook(bookId: String) {
         chapterDao.deleteByBook(bookId)

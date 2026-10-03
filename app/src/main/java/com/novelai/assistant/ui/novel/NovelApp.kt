@@ -47,6 +47,7 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
+import com.novelai.assistant.data.tts.ListeningNavBus
 import com.novelai.assistant.ui.assistant.AssistantScreen
 import com.novelai.assistant.ui.assistant.ReaderCompanionScreen
 import com.novelai.assistant.ui.bookshelf.BookshelfScreen
@@ -55,6 +56,8 @@ import com.novelai.assistant.ui.components.glassSource
 import com.novelai.assistant.ui.components.rememberGlassState
 import com.novelai.assistant.ui.continuation.ContinuationScreen
 import com.novelai.assistant.ui.discover.DiscoverScreen
+import com.novelai.assistant.ui.listening.ListeningFloatingCapsule
+import com.novelai.assistant.ui.listening.ListeningScreen
 import com.novelai.assistant.ui.reader.ReaderScreen
 import com.novelai.assistant.ui.settings.ProviderEditScreen
 import com.novelai.assistant.ui.settings.SettingsScreen
@@ -66,12 +69,14 @@ object Routes {
     const val DISCOVER = "discover"
     const val ASSISTANT = "assistant"
     const val SETTINGS = "settings"
+    const val LISTENING = "listening"
     const val READER = "reader/{bookId}?chapter={chapter}"
     const val GENERATE = "generate/{bookId}/{chapterId}?mode={mode}"
     const val TREE = "tree/{bookId}"
     const val PROVIDER_EDIT = "provider_edit/{providerId}"
     const val READER_COMPANION = "reader_companion/{bookId}?quote={quote}&action={action}"
 
+    fun listening() = "listening"
     fun assistant() = "assistant"
     fun reader(bookId: String) = "reader/$bookId"
     fun readerAt(bookId: String, chapterIndex: Int) = "reader/$bookId?chapter=$chapterIndex"
@@ -104,8 +109,9 @@ private fun isTopLevelRoute(route: String?): Boolean =
     route != null && route in topLevelRoutes
 
 @Composable
-fun NovelApp() {
+fun NovelApp(listeningNavBus: ListeningNavBus? = null) {
     val appViewModel: AppViewModel = hiltViewModel()
+    val navBus = listeningNavBus ?: appViewModel.listeningNavBus
     val onboardingDone by appViewModel.onboardingDone.collectAsStateWithLifecycle()
 
     // 引导标记加载中：显示底色占位，避免闪烁
@@ -120,65 +126,88 @@ fun NovelApp() {
     val currentRoute = backStackEntry?.destination?.route
     val showBottomBar = isTopLevelRoute(currentRoute)
 
-    Scaffold(
-        containerColor = MaterialTheme.colorScheme.background,
-        contentWindowInsets = WindowInsets(0, 0, 0, 0),
-        bottomBar = {
-            if (showBottomBar) {
-                GlassBottomBar(
-                    hazeState = hazeState,
-                    currentRoute = currentRoute,
-                    onSelect = { dest -> navigateTopLevel(navController, dest) }
-                )
+    // 监听通知栏卡片点击事件：跳转到专门听书模块
+    androidx.compose.runtime.LaunchedEffect(navBus) {
+        navBus.openListening.collect {
+            navController.navigate(Routes.LISTENING) {
+                launchSingleTop = true
             }
         }
-    ) { padding ->
-        NavHost(
-            navController = navController,
-            startDestination = if (onboardingDone == true) Routes.BOOKSHELF else Routes.ONBOARDING,
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(top = 0.dp, bottom = padding.calculateBottomPadding())
-                .glassSource(hazeState),
-            enterTransition = {
-                slideInHorizontally(tween(340)) { it / 3 } + fadeIn(tween(300))
-            },
-            exitTransition = {
-                slideOutHorizontally(tween(340)) { -it / 5 } + fadeOut(tween(280))
-            },
-            popEnterTransition = {
-                slideInHorizontally(tween(340)) { -it / 5 } + fadeIn(tween(300))
-            },
-            popExitTransition = {
-                slideOutHorizontally(tween(340)) { it / 3 } + fadeOut(tween(280))
+    }
+
+    val showCapsule = currentRoute != null &&
+        !currentRoute.startsWith("reader") &&
+        currentRoute != Routes.LISTENING &&
+        currentRoute != Routes.ONBOARDING
+
+    Box(Modifier.fillMaxSize()) {
+        Scaffold(
+            containerColor = MaterialTheme.colorScheme.background,
+            contentWindowInsets = WindowInsets(0, 0, 0, 0),
+            bottomBar = {
+                if (showBottomBar) {
+                    GlassBottomBar(
+                        hazeState = hazeState,
+                        currentRoute = currentRoute,
+                        onSelect = { dest -> navigateTopLevel(navController, dest) }
+                    )
+                }
             }
-        ) {
-            composable(Routes.ONBOARDING) {
-                OnboardingScreen(
-                    onDone = {
-                        navController.navigate(Routes.BOOKSHELF) {
-                            popUpTo(Routes.ONBOARDING) { inclusive = true }
+        ) { padding ->
+            NavHost(
+                navController = navController,
+                startDestination = if (onboardingDone == true) Routes.BOOKSHELF else Routes.ONBOARDING,
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(top = 0.dp, bottom = padding.calculateBottomPadding())
+                    .glassSource(hazeState),
+                enterTransition = {
+                    slideInHorizontally(tween(340)) { it / 3 } + fadeIn(tween(300))
+                },
+                exitTransition = {
+                    slideOutHorizontally(tween(340)) { -it / 5 } + fadeOut(tween(280))
+                },
+                popEnterTransition = {
+                    slideInHorizontally(tween(340)) { -it / 5 } + fadeIn(tween(300))
+                },
+                popExitTransition = {
+                    slideOutHorizontally(tween(340)) { it / 3 } + fadeOut(tween(280))
+                }
+            ) {
+                composable(Routes.ONBOARDING) {
+                    OnboardingScreen(
+                        onDone = {
+                            navController.navigate(Routes.BOOKSHELF) {
+                                popUpTo(Routes.ONBOARDING) { inclusive = true }
+                            }
                         }
-                    }
-                )
-            }
-            composable(Routes.BOOKSHELF) {
-                BookshelfScreen(
-                    onOpenBook = { navController.navigate(Routes.reader(it)) },
-                    onOpenTree = { navController.navigate(Routes.tree(it)) }
-                )
-            }
-            composable(Routes.DISCOVER) {
-                DiscoverScreen()
-            }
-            composable(Routes.ASSISTANT) {
-                AssistantScreen()
-            }
-            composable(Routes.SETTINGS) {
-                SettingsScreen(
-                    onEditProvider = { navController.navigate(Routes.providerEdit(it)) }
-                )
-            }
+                    )
+                }
+                composable(Routes.BOOKSHELF) {
+                    BookshelfScreen(
+                        onOpenBook = { navController.navigate(Routes.reader(it)) },
+                        onOpenTree = { navController.navigate(Routes.tree(it)) }
+                    )
+                }
+                composable(Routes.DISCOVER) {
+                    DiscoverScreen()
+                }
+                composable(Routes.ASSISTANT) {
+                    AssistantScreen()
+                }
+                composable(Routes.SETTINGS) {
+                    SettingsScreen(
+                        onEditProvider = { navController.navigate(Routes.providerEdit(it)) }
+                    )
+                }
+                composable(Routes.LISTENING) {
+                    ListeningScreen(
+                        onBack = { navController.popBackStack() },
+                        onOpenReader = { bookId, chapterIndex ->
+                            navController.navigate(Routes.readerAt(bookId, chapterIndex))
+                        }
+                    )
+                }
             composable(
                 Routes.READER,
                 arguments = listOf(
@@ -255,6 +284,19 @@ fun NovelApp() {
                 )
             }
         }
+    }
+
+    if (showCapsule) {
+        ListeningFloatingCapsule(
+            ttsPlayer = appViewModel.ttsPlayer,
+            prefs = appViewModel.readingPreferencesRepository,
+            onOpenListening = {
+                navController.navigate(Routes.LISTENING) {
+                    launchSingleTop = true
+                }
+            }
+        )
+    }
     }
 }
 

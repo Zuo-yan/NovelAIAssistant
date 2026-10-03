@@ -4,6 +4,8 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.novelai.assistant.data.prefs.AppThemeMode
 import com.novelai.assistant.data.prefs.ReadingPreferencesRepository
+import com.novelai.assistant.data.tts.ListeningNavBus
+import com.novelai.assistant.data.tts.TtsPlayer
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -12,10 +14,12 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
-/** 应用级状态：新手引导完成标记、全局主题模式等 */
+/** 应用级状态：新手引导完成标记、全局主题模式、全局听书悬浮组件与事件分发 */
 @HiltViewModel
 class AppViewModel @Inject constructor(
-    private val readingPreferencesRepository: ReadingPreferencesRepository
+    val readingPreferencesRepository: ReadingPreferencesRepository,
+    val ttsPlayer: TtsPlayer,
+    val listeningNavBus: ListeningNavBus
 ) : ViewModel() {
 
     /** null = 加载中；true = 已完成引导 */

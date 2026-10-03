@@ -135,7 +135,9 @@ class DiscoverViewModel @Inject constructor(
                     title = book.title,
                     author = book.author,
                     sourceType = if (_source.value == FetchSource.SFACG) BookSourceType.BOLUOBAO else BookSourceType.FANQIE,
-                    chapters = imported
+                    chapters = imported,
+                    coverUrl = book.coverUrl,
+                    sourceBookId = book.bookId
                 )
                 _state.value = DiscoverUiState.Imported(book.title, imported.size)
             } catch (e: kotlinx.coroutines.CancellationException) {
